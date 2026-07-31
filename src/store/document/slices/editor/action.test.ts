@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import type { ScopedMutator } from 'swr/_internal';
+import type { MutatorCallback, ScopedMutator } from 'swr/_internal';
 import { describe, expect, it, vi } from 'vitest';
 
 import { EMPTY_EDITOR_STATE } from '@/libs/editor/constants';
@@ -52,7 +52,10 @@ describe('DocumentStore - Editor Actions', () => {
       const keyString = JSON.stringify(key);
       if (data === undefined) return cache.get(keyString);
 
-      const nextData = typeof data === 'function' ? await data(cache.get(keyString)) : data;
+      const nextData =
+        typeof data === 'function'
+          ? await (data as MutatorCallback<unknown>)(cache.get(keyString))
+          : await data;
       cache.set(keyString, nextData);
       return nextData;
     }) as ScopedMutator);

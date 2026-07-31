@@ -1,6 +1,6 @@
 import { CUSTOM_DOCUMENT_FILE_TYPE } from '@lobechat/const';
 import { act, renderHook } from '@testing-library/react';
-import type { ScopedMutator } from 'swr/_internal';
+import type { MutatorCallback, ScopedMutator } from 'swr/_internal';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setScopedMutate } from '@/libs/swr';
@@ -61,7 +61,10 @@ describe('Page mutations', () => {
       const keyString = JSON.stringify(key);
       if (data === undefined) return cache.get(keyString);
 
-      const nextData = typeof data === 'function' ? await data(cache.get(keyString)) : data;
+      const nextData =
+        typeof data === 'function'
+          ? await (data as MutatorCallback<unknown>)(cache.get(keyString))
+          : await data;
       cache.set(keyString, nextData);
       return nextData;
     }) as ScopedMutator);

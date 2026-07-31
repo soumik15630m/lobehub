@@ -4,7 +4,7 @@ import {
   DERIVED_DOCUMENT_SOURCE_TYPE,
 } from '@lobechat/const';
 import { act, renderHook } from '@testing-library/react';
-import type { ScopedMutator } from 'swr/_internal';
+import type { MutatorCallback, ScopedMutator } from 'swr/_internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setScopedMutate } from '@/libs/swr';
@@ -72,7 +72,10 @@ beforeEach(() => {
     const keyString = JSON.stringify(key);
     if (data === undefined) return cache.get(keyString);
 
-    const nextData = typeof data === 'function' ? await data(cache.get(keyString)) : data;
+    const nextData =
+      typeof data === 'function'
+        ? await (data as MutatorCallback<unknown>)(cache.get(keyString))
+        : await data;
     cache.set(keyString, nextData);
     return nextData;
   }) as ScopedMutator);

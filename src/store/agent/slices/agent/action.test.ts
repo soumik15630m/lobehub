@@ -1,6 +1,6 @@
 import { CHAT_GROUP_SESSION_ID_PREFIX } from '@lobechat/types';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import type { ScopedMutator } from 'swr/_internal';
+import type { MutatorCallback, ScopedMutator } from 'swr/_internal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { message } from '@/components/AntdStaticMethods';
@@ -896,7 +896,10 @@ describe('AgentSlice Actions', () => {
         const keyString = JSON.stringify(swrKey);
         if (data === undefined) return cache.get(keyString);
 
-        const nextData = typeof data === 'function' ? await data(cache.get(keyString)) : data;
+        const nextData =
+          typeof data === 'function'
+            ? await (data as MutatorCallback<unknown>)(cache.get(keyString))
+            : await data;
         cache.set(keyString, nextData);
         return nextData;
       }) as ScopedMutator);
