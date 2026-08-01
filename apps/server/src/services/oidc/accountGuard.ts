@@ -19,7 +19,7 @@ type OIDCRecoveryReason = Extract<
 type OIDCAccountGuardResult =
   | {
       path: OIDCAccountGuardPath;
-      status: 'matched' | 'missing' | 'missing_app_session';
+      status: 'matched' | 'missing' | 'missing_app_session' | 'missing_interaction';
     }
   | {
       path: OIDCAccountGuardPath;
@@ -58,11 +58,22 @@ export const guardOIDCAuthorizationAccount = async ({
   if (stage.name === 'resume') {
     if (!userId) return { path: stage.name, status: 'missing_app_session' };
 
-    const status = await new OIDCService(provider).reconcileInteractionAccount(stage.uid, userId);
+    try {
+      const status = await new OIDCService(provider).reconcileInteractionAccount(stage.uid, userId);
 
-    return status === 'recovered'
-      ? { path: stage.name, reason: 'account_mismatch', status }
-      : { path: stage.name, status };
+      return status === 'recovered'
+        ? { path: stage.name, reason: 'account_mismatch', status }
+        : { path: stage.name, status };
+    } catch (error) {
+      /**
+       * An expired interaction is a normal browser timeout. The provider callback owns its
+       * standard invalid-request response, so it must not become an account-guard outage.
+       */
+      if (error instanceof Error && error.name === 'SessionNotFound') {
+        return { path: stage.name, status: 'missing_interaction' };
+      }
+      throw error;
+    }
   }
 
   const db = await getServerDB();

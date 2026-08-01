@@ -137,4 +137,33 @@ describe('guardOIDCAuthorizationAccount', () => {
     );
     expect(getServerDB).not.toHaveBeenCalled();
   });
+
+  it('lets oidc-provider handle an expired authorization interaction', async () => {
+    const error = new Error('invalid_request');
+    error.name = 'SessionNotFound';
+    vi.spyOn(OIDCService.prototype, 'reconcileInteractionAccount').mockRejectedValueOnce(error);
+
+    const result = await guardOIDCAuthorizationAccount({
+      getCookie: vi.fn(),
+      pathname: '/oidc/auth/interaction-1',
+      provider,
+    });
+
+    expect(result).toEqual({ path: 'resume', status: 'missing_interaction' });
+    expect(getServerDB).not.toHaveBeenCalled();
+  });
+
+  it('propagates unexpected interaction reconciliation errors', async () => {
+    vi.spyOn(OIDCService.prototype, 'reconcileInteractionAccount').mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+
+    await expect(
+      guardOIDCAuthorizationAccount({
+        getCookie: vi.fn(),
+        pathname: '/oidc/auth/interaction-1',
+        provider,
+      }),
+    ).rejects.toThrow('database unavailable');
+  });
 });
