@@ -40,13 +40,9 @@ const handler = async (req: NextRequest) => {
       });
 
       if (reconciliation?.status === 'missing_app_session') {
-        return NextResponse.json(
-          {
-            error: 'unauthorized',
-            error_description: 'Authentication is required to continue authorization',
-          },
-          { status: 401 },
-        );
+        const signInUrl = new URL('/signin', requestUrl);
+        signInUrl.searchParams.set('callbackUrl', `${requestUrl.pathname}${requestUrl.search}`);
+        return NextResponse.redirect(signInUrl, { status: 302 });
       }
 
       if (reconciliation?.status === 'recovered') {

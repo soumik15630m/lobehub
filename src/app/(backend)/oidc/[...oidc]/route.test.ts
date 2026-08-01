@@ -136,7 +136,7 @@ describe('OIDC route', () => {
     expect(mocks.getOIDCProvider).not.toHaveBeenCalled();
   });
 
-  it('blocks authorization when the application session is missing', async () => {
+  it('redirects to sign-in when the application session is missing', async () => {
     mocks.guardOIDCAuthorizationAccount.mockResolvedValueOnce({
       path: 'authorization',
       status: 'missing_app_session',
@@ -151,12 +151,33 @@ describe('OIDC route', () => {
 
     const response = await GET(request);
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({
-      error: 'unauthorized',
-      error_description: 'Authentication is required to continue authorization',
-    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe(
+      'https://example.com/signin?callbackUrl=%2Foidc%2Fauth%3Fclient_id%3Dclient-1',
+    );
     expect(mocks.providerCallback).not.toHaveBeenCalled();
+  });
+
+  it('lets oidc-provider render the standard error for an expired interaction', async () => {
+    mocks.guardOIDCAuthorizationAccount.mockResolvedValueOnce({
+      path: 'resume',
+      status: 'missing_interaction',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { GET } = await import('./route');
+    const request = {
+      cookies: { get: vi.fn() },
+      method: 'GET',
+      url: 'https://example.com/oidc/auth/interaction-1',
+    } as unknown as NextRequest;
+
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(mocks.providerCallback).toHaveBeenCalledTimes(1);
+    expect(mocks.middleware).toHaveBeenCalledTimes(1);
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('fails closed when the authorization account check fails', async () => {
