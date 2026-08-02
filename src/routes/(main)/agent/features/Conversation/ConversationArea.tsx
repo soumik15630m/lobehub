@@ -69,6 +69,10 @@ const Conversation = memo(() => {
   );
   const replaceMessages = useChatStore((s) => s.replaceMessages);
   const messages = useChatStore((s) => s.dbMessagesMap[chatKey]);
+  // Set only when a send just created this conversation's topic, so the
+  // provider can keep the message list mounted across `_new` → that id instead
+  // of remounting and blanking it for a frame.
+  const materializedTopicId = useChatStore((s) => s.materializedTopicId);
 
   log('contextKey %s: %o', chatKey, messages);
 
@@ -122,6 +126,7 @@ const Conversation = memo(() => {
       context={context}
       hasInitMessages={!!messages}
       hooks={hooks}
+      materializedTopicId={materializedTopicId}
       messages={messages}
       operationState={operationState}
       onMessagesChange={(messages, ctx) => {

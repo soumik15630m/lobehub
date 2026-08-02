@@ -51,6 +51,17 @@ export interface ChatTopicState {
   creatingTopic: boolean;
   inSearchingMode?: boolean;
   isSearchingTopic: boolean;
+  /**
+   * The topic id that was just created by an in-flight send, i.e. the id the
+   * `_new` conversation materialized into. Only the send / topic-creation paths
+   * set it (they are the ones that pass `clearNewKey`); every other topic switch
+   * clears it.
+   *
+   * This is what lets a consumer tell "the conversation I am in just gained an
+   * id" apart from "the user navigated to a different topic" — the two are
+   * otherwise indistinguishable, since both are a `topicId: null` → id change.
+   */
+  materializedTopicId?: string;
   searchTopics: ChatTopic[];
   /**
    * Unified topic data map for each agent

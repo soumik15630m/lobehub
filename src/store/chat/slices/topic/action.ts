@@ -1201,8 +1201,16 @@ export class ChatTopicActionImpl {
       });
     }
 
+    // `clearNewKey` is passed only by the send / topic-creation paths, so it is
+    // the one signal that separates "this conversation just materialized its
+    // topic" from "the user opened a different topic". Consumers use it to keep
+    // the conversation surface mounted across the former; any other switch must
+    // clear it so a stale id can never make real navigation look like a
+    // materialization.
+    const materializedTopicId = id && opts.clearNewKey ? id : undefined;
+
     this.#set(
-      { activeTopicId: id || (null as any), activeThreadId: undefined },
+      { activeTopicId: id || (null as any), activeThreadId: undefined, materializedTopicId },
       false,
       n('toggleTopic'),
     );

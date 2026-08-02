@@ -188,6 +188,23 @@ const StoreIdentityProbe = ({ stores }: { stores: unknown[] }) => {
   return <div data-testid="store-context-key">{messageMapKey(context)}</div>;
 };
 
+/**
+ * Arms a scheduled send, then reports whether it is still armed. Scheduled send
+ * is per-conversation state that only a remount clears — `StoreUpdater` resets
+ * context and message fields, not the composer.
+ */
+const ScheduledSendProbe = () => {
+  const scheduledSendAt = useConversationStore((s) => s.scheduledSendAt);
+  const setScheduledSendAt = useConversationStore((s) => s.setScheduledSendAt);
+
+  return (
+    <div>
+      <button onClick={() => setScheduledSendAt('2026-01-01T00:00:00.000Z')}>arm</button>
+      <div data-testid="scheduled-send-at">{scheduledSendAt ?? 'none'}</div>
+    </div>
+  );
+};
+
 const OverlayHeightSetter = () => {
   const setChatInputOverlayHeight = useConversationStore((s) => s.setChatInputOverlayHeight);
 
@@ -257,7 +274,12 @@ describe('ConversationProvider', () => {
     );
 
     rerender(
-      <ConversationProvider hasInitMessages context={materializedContext} messages={oldMessages}>
+      <ConversationProvider
+        hasInitMessages
+        context={materializedContext}
+        materializedTopicId={'tpc_created'}
+        messages={oldMessages}
+      >
         <StoreIdentityProbe stores={stores} />
       </ConversationProvider>,
     );
@@ -269,6 +291,44 @@ describe('ConversationProvider', () => {
     expect(screen.getByTestId('store-context-key')).toHaveTextContent(
       messageMapKey(materializedContext),
     );
+  });
+
+  it('creates a fresh store when navigating from a new chat to an existing topic', () => {
+    const stores: unknown[] = [];
+    const newChatContext = {
+      agentId: 'agt_old',
+      threadId: null,
+      topicId: null,
+    } satisfies ConversationContext;
+    const existingTopicContext = {
+      agentId: 'agt_old',
+      threadId: null,
+      topicId: 'tpc_existing',
+    } satisfies ConversationContext;
+
+    const { rerender } = render(
+      <ConversationProvider hasInitMessages context={newChatContext} messages={[]}>
+        <ScheduledSendProbe />
+        <StoreIdentityProbe stores={stores} />
+      </ConversationProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'arm' }));
+    expect(screen.getByTestId('scheduled-send-at')).toHaveTextContent('2026-01-01T00:00:00.000Z');
+
+    // Opening an unrelated topic from the sidebar is navigation, not this
+    // send's topic materializing — `materializedTopicId` stays undefined.
+    rerender(
+      <ConversationProvider hasInitMessages context={existingTopicContext} messages={oldMessages}>
+        <ScheduledSendProbe />
+        <StoreIdentityProbe stores={stores} />
+      </ConversationProvider>,
+    );
+
+    expect(stores).toHaveLength(2);
+    // A send armed in the new chat must not stay armed in the topic the user
+    // navigated to.
+    expect(screen.getByTestId('scheduled-send-at')).toHaveTextContent('none');
   });
 
   it('creates a fresh store when switching between two persisted topics', () => {
