@@ -42,6 +42,9 @@ const Conversation = memo<ConversationAreaProps>(({ mobile = false }) => {
   );
   const replaceMessages = useChatStore((s) => s.replaceMessages);
   const messages = useChatStore((s) => s.dbMessagesMap[chatKey]);
+  // Set only when a send just created this conversation's topic — the group
+  // first-message flow this file drives is exactly that case.
+  const materializedTopicId = useChatStore((s) => s.materializedTopicId);
 
   // Get operation state from ChatStore for reactive updates
   const operationState = useOperationState(context);
@@ -53,6 +56,7 @@ const Conversation = memo<ConversationAreaProps>(({ mobile = false }) => {
       actionsBar={actionsBarConfig}
       context={context}
       hasInitMessages={!!messages}
+      materializedTopicId={materializedTopicId}
       messages={messages}
       operationState={operationState}
       onMessagesChange={(messages, ctx) => {

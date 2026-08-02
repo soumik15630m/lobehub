@@ -910,6 +910,39 @@ describe('topic action', () => {
       expect(revalidateMessagesSpy).not.toHaveBeenCalled();
     });
 
+    it('should mark materializedTopicId only for a send-created topic', async () => {
+      const { result } = renderHook(() => useChatStore());
+
+      // `clearNewKey` is only passed by the send / topic-creation paths.
+      await act(async () => {
+        await result.current.switchTopic('tpc_created', {
+          clearNewKey: true,
+          skipRefreshMessage: true,
+        });
+      });
+
+      expect(useChatStore.getState().materializedTopicId).toBe('tpc_created');
+
+      // Opening an existing topic is navigation — it must clear the marker, so a
+      // stale id can never make real navigation look like a materialization.
+      await act(async () => {
+        await result.current.switchTopic('tpc_existing', { skipRefreshMessage: true });
+      });
+
+      expect(useChatStore.getState().materializedTopicId).toBeUndefined();
+
+      // Going back to the new-chat view clears it too.
+      await act(async () => {
+        await result.current.switchTopic('tpc_created', {
+          clearNewKey: true,
+          skipRefreshMessage: true,
+        });
+        await result.current.switchTopic(null, { skipRefreshMessage: true });
+      });
+
+      expect(useChatStore.getState().materializedTopicId).toBeUndefined();
+    });
+
     it('should clear new key data when switching to null (main scope)', async () => {
       const { result } = renderHook(() => useChatStore());
       const activeAgentId = 'test-agent-id';

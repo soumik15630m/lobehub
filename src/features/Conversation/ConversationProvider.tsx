@@ -56,6 +56,20 @@ export interface ConversationProviderProps {
    * External messages to sync into the store
    * When provided, these messages will be used as the source of truth
    */
+  /**
+   * The topic id that the in-flight send just created for THIS conversation
+   * (`chatStore.materializedTopicId`).
+   *
+   * Supplying it lets the provider keep its store — and therefore the
+   * virtualized message list — mounted while `topicId: null` turns into that
+   * id, instead of remounting and blanking the list for a frame.
+   *
+   * A `null → id` transition alone is NOT sufficient to infer this: opening any
+   * existing topic from the new-chat view looks identical. So the host must
+   * establish it, and when it cannot the provider falls back to remounting,
+   * which is always correct (just visibly less smooth).
+   */
+  materializedTopicId?: string;
   messages?: UIChatMessage[];
   /**
    * Callback when messages are fetched or changed internally
@@ -90,6 +104,7 @@ export const ConversationProvider = memo<ConversationProviderProps>(
     context,
     hooks = {},
     hasInitMessages,
+    materializedTopicId,
     messages,
     onMessagesChange,
     operationState,
@@ -115,13 +130,22 @@ export const ConversationProvider = memo<ConversationProviderProps>(
      * what resets the virtualizer. So absorb this one transition and keep the
      * subtree mounted; `StoreUpdater`'s pre-paint layout effect already handles
      * a context change within a mount.
+     *
+     * The shape of the transition is deliberately NOT the test. Opening any
+     * existing topic from the new-chat view is also `topicId: null` → an id, and
+     * absorbing that one would carry composer state — an armed `scheduledSendAt`,
+     * the draft, message-edit and tool state — into an unrelated conversation,
+     * because `StoreUpdater` resets only the context and message fields. So the
+     * host must name the id its send just created; without that, remount.
      */
     const providerKeyRef = useRef(contextKey);
     const prevContextKeyRef = useRef(contextKey);
     if (prevContextKeyRef.current !== contextKey) {
-      const materializedTopicKey = messageMapKey({ ...context, topicId: null });
+      const newChatKey = messageMapKey({ ...context, topicId: null });
       const isTopicMaterialization =
-        !!context.topicId && prevContextKeyRef.current === materializedTopicKey;
+        !!context.topicId &&
+        context.topicId === materializedTopicId &&
+        prevContextKeyRef.current === newChatKey;
 
       if (!isTopicMaterialization) providerKeyRef.current = contextKey;
       prevContextKeyRef.current = contextKey;
