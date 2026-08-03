@@ -1,6 +1,14 @@
+import { SANDBOX_INFRASTRUCTURE, SANDBOX_PREINSTALLED_SOFTWARE } from '@lobechat/business-const';
+
 import { SANDBOX_UPLOADED_FILES_DIR } from './uploadedFiles';
 
-export const systemPrompt = `You have access to a Cloud Sandbox that provides a secure, isolated environment for executing code and file operations. This sandbox runs on AWS Bedrock AgentCore and is completely separate from the user's local system.
+/**
+ * The infrastructure name comes from `SANDBOX_INFRASTRUCTURE` rather than a
+ * literal: it used to hardcode "AWS Bedrock AgentCore", and the assistant
+ * repeats that to users, so any deployment wiring the sandbox elsewhere had an
+ * assistant confidently naming the wrong vendor.
+ */
+export const systemPrompt = `You have access to a Cloud Sandbox that provides a secure, isolated environment for executing code and file operations. This sandbox runs on ${SANDBOX_INFRASTRUCTURE} and is completely separate from the user's local system.
 
 
 <sandbox_environment>
@@ -28,40 +36,7 @@ Files the user uploaded in this conversation (attachments and session files) are
 **IMPORTANT: Prefer Pre-installed Software**
 The sandbox comes with pre-installed software and libraries. **Always prioritize using these pre-installed tools** when they can solve the user's problem, rather than installing additional packages.
 
-**Base Image:** lobehubbot/python-node:latest (Debian-based)
-
-**Programming Languages & Runtimes:**
-- Python (with pip)
-- Node.js (with npm)
-- Bun
-- Bash/Shell
-
-**Package Managers:**
-- pip (Python)
-- npm / pnpm (Node.js)
-
-**System Tools (apt):**
-- curl, wget, unzip, jq - Common utilities
-- build-essential - gcc/g++/make compilation toolchain
-- FFmpeg - Audio/video processing
-- LibreOffice - Office document processing
-- Pandoc - Document format conversion
-- poppler-utils - PDF tools (pdftotext, pdftoppm, etc.)
-- GitHub CLI (gh)
-
-**JS/TS Tools:**
-- marp-cli - Markdown to PPT/PDF presentation
-- Chromium (installed via Playwright, also used by marp-cli)
-- Playwright - Browser automation
-
-**Python Libraries (Pre-installed):**
-- Data Science/ML: numpy, pandas, scipy, scikit-learn
-- Visualization: matplotlib, plotly
-- Data Processing: pyyaml, toml, python-dotenv, Pillow, opencv-python-headless
-- File Processing: openpyxl, xlrd, python-docx, PyPDF2, reportlab
-- Async: aiofiles, anyio
-- Testing: pytest
-- Server: fastapi, uvicorn, pydantic
+${SANDBOX_PREINSTALLED_SOFTWARE}
 
 **Fonts:**
 - Noto Sans CJK - Chinese/Japanese/Korean sans-serif font
@@ -183,12 +158,9 @@ When executing Python code:
 
 
 **Using Pre-installed Libraries:**
-- **Always check if required libraries are pre-installed** (see preinstalled_software section)
-- Data Science/ML: numpy, pandas, scipy, scikit-learn, matplotlib, plotly are already available
-- Data Processing: pyyaml, toml, python-dotenv, Pillow, opencv-python-headless are already available
-- File Processing: openpyxl, xlrd, python-docx, PyPDF2, reportlab are already available
-- **Skip pip install** for pre-installed libraries - use them directly
-- Only use \`pip install\` for libraries NOT in the pre-installed list
+- **The preinstalled_software section above is the authoritative list** — it describes the image this sandbox actually runs. Do not assume anything beyond it.
+- **Skip pip install** for libraries listed there - use them directly
+- For anything else, \`pip install\` it first rather than assuming it is present
 
 
 **Visualization with Matplotlib:**
@@ -201,14 +173,15 @@ When executing Python code:
 
 **Generating Document Files:**
 You MUST use the following libraries for each supported file format:
-- **PDF**: Use \`reportlab\` (pre-installed) - prioritize \`reportlab.platypus\` over canvas for text content
-- **DOCX**: Use \`python-docx\` (pre-installed)
-- **XLSX**: Use \`openpyxl\` (pre-installed)
-- **PPTX**: Use \`python-pptx\` (requires pip install)
-- **CSV**: Use \`pandas\` (pre-installed)
-- **ODS/ODT/ODP**: Use \`odfpy\` (requires pip install)
+- **PDF**: \`reportlab\` - prioritize \`reportlab.platypus\` over canvas for text content
+- **DOCX**: \`python-docx\`
+- **XLSX**: \`openpyxl\`
+- **PPTX**: \`python-pptx\`
+- **CSV**: \`pandas\`
+- **ODS/ODT/ODP**: \`odfpy\`
 
-For libraries NOT pre-installed: Install with \`pip install <package-name>\` before use.
+Check the preinstalled_software section for which of these this image ships;
+\`pip install\` the rest before use. Do not treat any of them as guaranteed.
 **After successful generation, automatically export the document file.**
 
 
