@@ -233,10 +233,7 @@ const RECENCY_CANDIDATE_MULTIPLIER = 4;
  * score ordering is real (see `liftsAgentFilter`): trading the exact inline
  * predicate for a score-ordered pool is unsound when the scores backing that
  * order are NULL. Indexing the column instead is tracked with the other
- * missing fast fields in LOBE-12381.
- *
- * @see https://linear.app/lobehub/issue/LOBE-12379
- * @see https://linear.app/lobehub/issue/LOBE-12575
+ * missing fast fields (adding workspace_id to BM25 indexes).
  */
 const WORKSPACE_FILTER_CANDIDATE_MULTIPLIER = 5;
 
@@ -269,7 +266,7 @@ const WORKSPACE_FILTER_MIN_CANDIDATES = 500;
 
 /**
  * Flip to `true` once every BM25 index used by this repo carries `workspace_id`
- * as a fast keyword field (LOBE-12381). pg_search then pushes `workspace_id IS
+ * as a fast keyword field. pg_search then pushes `workspace_id IS
  * NULL` down as `must_not: exists(workspace_id)` and `workspace_id = ?` as a
  * `term`, so the ownership predicate can stay inline and personal search becomes
  * exact again (no candidate over-fetch, no dropped rows) while workspace-mode
@@ -311,7 +308,7 @@ export class SearchRepo {
    * approximation. Workspace mode has no such pushdown-able owner column — its
    * rows are a tiny slice of a global TopN — so lifting the filter there would
    * silently return nothing. It keeps the exact inline predicate and stays on
-   * the slow plan until LOBE-12381 lands.
+   * the slow plan until workspace_id is added to the BM25 indexes.
    */
   private get liftsWorkspaceFilter() {
     return !WORKSPACE_ID_IN_BM25_INDEX && !this.workspaceId;
@@ -324,7 +321,7 @@ export class SearchRepo {
    * pool, which is only sound while the scan's `ORDER BY paradedb.score()` is
    * real. Personal mode qualifies: its scan keeps only pushdown-able quals, so
    * scores are valid and the pool is genuinely the top-N matches. Workspace
-   * mode does not (until LOBE-12381 makes `workspace_id` a fast field): its
+   * mode does not (its `workspace_id` is not yet a BM25 fast field): its
    * inline `workspace_id` qual NULLs the whole score column on pg_search
    * 0.15.26, so a pool cut on that ordering would be an arbitrary slice that
    * silently drops agent rows. It keeps `agent_id` inline next to
@@ -1017,7 +1014,7 @@ export class SearchRepo {
    * the plain index-scan plan: `knowledge_base_id` is not in the BM25 index
    * either, so isolating the scan would not buy TopN. The KB filter does bound
    * the match set to one knowledge base (via its btree index), which keeps it
-   * workable until LOBE-12381 adds the missing fast fields.
+   * workable until the missing fast fields are added to the BM25 indexes.
    */
   async searchKnowledgeBaseDocuments(
     query: string,
