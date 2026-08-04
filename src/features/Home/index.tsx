@@ -161,6 +161,10 @@ const styles = createStaticStyles(({ css }) => ({
   // reflow, not a state the user held and then changed their mind on. Only the
   // render where loading first resolves gets this; every later collapse or
   // expand (manual toggle, content arriving or leaving) keeps the transition.
+  // `!important` on both: `.railSurface[data-collapsed='true']` outweighs this
+  // single class on specificity (0,2,0 vs 0,1,0), so without it the rail's own
+  // 220ms `transition-delay` on `visibility` would still win — an instant move
+  // followed by staying "visible" for 220ms before it actually hides.
   noTransition: css`
     transition-delay: 0s !important;
     transition-duration: 0s !important;
@@ -255,6 +259,10 @@ const Home = memo(() => {
   const railVisible = resolveHomeRailVisible({ isLogin, railHasContent, showHomeRail });
   const railCollapsed = !railVisible;
 
+  // Read here as a ref, not useState: the render that first settles must see
+  // the stale `false` written by the *previous* commit, not one triggered by
+  // this render's own update — a `useState` here would fire the extra render
+  // before this transition gets suppressed, closing the window a beat early.
   const hasSettledRailRef = useRef(false);
   const suppressRailTransition = resolveSuppressRailTransition({
     hasResolved: railHasResolved,
