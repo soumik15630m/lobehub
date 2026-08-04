@@ -341,9 +341,11 @@ export const useHomeInboxSections = ({
 // into the main column instance are therefore necessarily empty too: that
 // instance reads the same briefs (`cacheScope`), the same topics, and the
 // same shared `scope` (`useHomeStore`) as this one, so whatever emptied out
-// the rail's own copy is already reflected there. That equivalence holds only
-// because `hideNeedsYou`/`hideUnread` stay `true` here — widen either and the
-// rail's section set would stop matching what actually gates `hasContent`.
+// the rail's own copy is already reflected there. This constant exists so
+// the predicate instance (`Home/index.tsx`) and the rendered rail (the
+// `<HomeInbox {...}>` in the aside) can never receive different options —
+// `hasContent` measures exactly what renders only as long as both spread
+// this one object.
 export const HOME_RAIL_INBOX_OPTIONS = {
   hideNeedsYou: true,
   hideUnread: true,
