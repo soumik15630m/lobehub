@@ -2,6 +2,7 @@ import type { CreateThreadParams } from '@lobechat/types';
 import { RequestTrigger, ThreadStatus } from '@lobechat/types';
 import type { SQL } from 'drizzle-orm';
 import { and, desc, eq, exists, isNotNull, isNull, not, notExists, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import type { ThreadItem } from '../schemas';
 import {
@@ -15,6 +16,11 @@ import {
 } from '../schemas';
 import type { LobeChatDatabase } from '../type';
 import { buildWorkspacePayload, buildWorkspaceWhere } from '../utils/workspace';
+
+const threadTargetAgents = alias(agents, 'thread_target_agents');
+const threadTargetGroups = alias(chatGroups, 'thread_target_groups');
+const topicTargetAgents = alias(agents, 'thread_topic_target_agents');
+const topicTargetGroups = alias(chatGroups, 'thread_topic_target_groups');
 
 /**
  * Per-thread subagent metrics, derived from the child messages at read time
@@ -89,25 +95,44 @@ export class ThreadModel {
     buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, threads);
 
   /**
-   * Threads inherit conversation visibility from their own target first, then
-   * from the parent topic or its legacy session mapping. Callers must join the
-   * topic, agent, and group tables before applying this filter.
+   * Threads require access to both their direct target (when present) and the
+   * parent topic target or its legacy session mapping. Callers must join the
+   * topic and both sets of agent/group aliases before applying this filter.
    */
   private resourceAccess = () => {
     const workspaceId = this.workspaceId;
     const scope = { userId: this.userId, workspaceId };
-    const groupId = sql<string | null>`COALESCE(${threads.groupId}, ${topics.groupId})`;
-    const agentId = sql<string | null>`COALESCE(${threads.agentId}, ${topics.agentId})`;
-    const groupAccess = and(isNotNull(groupId), buildWorkspaceWhere(scope, chatGroups));
-    const agentAccess = and(
-      isNull(groupId),
-      isNotNull(agentId),
-      buildWorkspaceWhere(scope, agents),
+    const threadGroupAccess = and(
+      isNotNull(threads.groupId),
+      buildWorkspaceWhere(scope, threadTargetGroups),
     );
-    const noDirectResource = and(isNull(groupId), isNull(agentId));
+    const threadAgentAccess = and(
+      isNull(threads.groupId),
+      isNotNull(threads.agentId),
+      buildWorkspaceWhere(scope, threadTargetAgents),
+    );
+    const noThreadResource = and(isNull(threads.groupId), isNull(threads.agentId));
+    const threadAccess = or(threadGroupAccess, threadAgentAccess, noThreadResource);
+    const topicGroupAccess = and(
+      isNotNull(topics.groupId),
+      buildWorkspaceWhere(scope, topicTargetGroups),
+    );
+    const topicAgentAccess = and(
+      isNull(topics.groupId),
+      isNotNull(topics.agentId),
+      buildWorkspaceWhere(scope, topicTargetAgents),
+    );
+    const noTopicResource = and(isNull(topics.groupId), isNull(topics.agentId));
 
     if (!workspaceId) {
-      return or(groupAccess, agentAccess, and(noDirectResource, eq(threads.userId, this.userId)));
+      return and(
+        threadAccess,
+        or(
+          topicGroupAccess,
+          topicAgentAccess,
+          and(noTopicResource, eq(topics.userId, this.userId)),
+        ),
+      );
     }
 
     const linkedWorkspaceAgents = (extraCondition?: SQL) =>
@@ -124,19 +149,22 @@ export class ThreadModel {
         );
     const hasLinkedWorkspaceAgent = exists(linkedWorkspaceAgents());
 
-    return or(
-      groupAccess,
-      agentAccess,
-      and(
-        noDirectResource,
-        isNotNull(topics.sessionId),
-        hasLinkedWorkspaceAgent,
-        notExists(linkedWorkspaceAgents(not(buildWorkspaceWhere(scope, agents)))),
-      ),
-      and(
-        noDirectResource,
-        eq(topics.userId, this.userId),
-        or(isNull(topics.sessionId), not(hasLinkedWorkspaceAgent)),
+    return and(
+      threadAccess,
+      or(
+        topicGroupAccess,
+        topicAgentAccess,
+        and(
+          noTopicResource,
+          isNotNull(topics.sessionId),
+          hasLinkedWorkspaceAgent,
+          notExists(linkedWorkspaceAgents(not(buildWorkspaceWhere(scope, agents)))),
+        ),
+        and(
+          noTopicResource,
+          eq(topics.userId, this.userId),
+          or(isNull(topics.sessionId), not(hasLinkedWorkspaceAgent)),
+        ),
       ),
     );
   };
@@ -178,14 +206,10 @@ export class ThreadModel {
       .select(queryColumns)
       .from(threads)
       .innerJoin(topics, eq(threads.topicId, topics.id))
-      .leftJoin(
-        agents,
-        eq(agents.id, sql<string | null>`COALESCE(${threads.agentId}, ${topics.agentId})`),
-      )
-      .leftJoin(
-        chatGroups,
-        eq(chatGroups.id, sql<string | null>`COALESCE(${threads.groupId}, ${topics.groupId})`),
-      )
+      .leftJoin(threadTargetAgents, eq(threadTargetAgents.id, threads.agentId))
+      .leftJoin(threadTargetGroups, eq(threadTargetGroups.id, threads.groupId))
+      .leftJoin(topicTargetAgents, eq(topicTargetAgents.id, topics.agentId))
+      .leftJoin(topicTargetGroups, eq(topicTargetGroups.id, topics.groupId))
       .where(and(this.ownership(), this.resourceAccess()))
       .orderBy(desc(threads.updatedAt));
 
@@ -200,14 +224,10 @@ export class ThreadModel {
       .select({ ...queryColumns, ...subagentMetricColumns })
       .from(threads)
       .innerJoin(topics, eq(threads.topicId, topics.id))
-      .leftJoin(
-        agents,
-        eq(agents.id, sql<string | null>`COALESCE(${threads.agentId}, ${topics.agentId})`),
-      )
-      .leftJoin(
-        chatGroups,
-        eq(chatGroups.id, sql<string | null>`COALESCE(${threads.groupId}, ${topics.groupId})`),
-      )
+      .leftJoin(threadTargetAgents, eq(threadTargetAgents.id, threads.agentId))
+      .leftJoin(threadTargetGroups, eq(threadTargetGroups.id, threads.groupId))
+      .leftJoin(topicTargetAgents, eq(topicTargetAgents.id, topics.agentId))
+      .leftJoin(topicTargetGroups, eq(topicTargetGroups.id, topics.groupId))
       .leftJoin(messages, eq(messages.threadId, threads.id))
       .where(
         and(

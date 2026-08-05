@@ -7,6 +7,7 @@ import {
   agentOperations,
   agents,
   agentsToSessions,
+  chatGroups,
   messages,
   sessions,
   threads,
@@ -100,7 +101,7 @@ describe('ThreadModel', () => {
   });
 
   describe('query visibility', () => {
-    it('does not return another workspace member private agent threads', async () => {
+    it('requires parent-topic access before exposing direct thread targets', async () => {
       await serverDB.insert(workspaces).values({
         id: 'thread-visibility-workspace',
         name: 'Thread Visibility Workspace',
@@ -121,6 +122,13 @@ describe('ThreadModel', () => {
           workspaceId: 'thread-visibility-workspace',
         },
       ]);
+      await serverDB.insert(chatGroups).values({
+        id: 'thread-public-group',
+        title: 'Thread Public Group',
+        userId,
+        visibility: 'public',
+        workspaceId: 'thread-visibility-workspace',
+      });
       await serverDB.insert(topics).values([
         {
           agentId: 'thread-public-agent',
@@ -145,6 +153,22 @@ describe('ThreadModel', () => {
         },
         {
           id: 'thread-private',
+          topicId: 'thread-private-topic',
+          type: ThreadType.Standalone,
+          userId,
+          workspaceId: 'thread-visibility-workspace',
+        },
+        {
+          agentId: 'thread-public-agent',
+          id: 'thread-private-public-child-agent',
+          topicId: 'thread-private-topic',
+          type: ThreadType.Standalone,
+          userId,
+          workspaceId: 'thread-visibility-workspace',
+        },
+        {
+          groupId: 'thread-public-group',
+          id: 'thread-private-public-child-group',
           topicId: 'thread-private-topic',
           type: ThreadType.Standalone,
           userId,
