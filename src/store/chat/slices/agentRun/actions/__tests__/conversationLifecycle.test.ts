@@ -2688,6 +2688,102 @@ describe('ConversationLifecycle actions', () => {
         );
       });
 
+      it('should keep the topic visibly running through the direct-mention bridge', async () => {
+        const { result } = renderHook(() => useChatStore());
+        const targetAgentId = 'agent-direct-target';
+        const toolMessageId = 'tool-call-agent-result';
+        const message = '@Agent B hello';
+
+        const userMessage = createMockMessage({
+          id: TEST_IDS.USER_MESSAGE_ID,
+          role: 'user',
+          content: message,
+        });
+        let assistantMessage = createMockMessage({
+          id: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          role: 'assistant',
+          content: '',
+          tools: [],
+        });
+
+        vi.spyOn(aiChatService, 'sendMessageInServer').mockResolvedValue({
+          messages: [userMessage, assistantMessage],
+          topics: [],
+          assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+          userMessageId: TEST_IDS.USER_MESSAGE_ID,
+        } as any);
+
+        (messageService.updateMessage as any).mockImplementation(
+          async (_id: string, value: any) => {
+            assistantMessage = { ...assistantMessage, ...value };
+            return { messages: [userMessage, assistantMessage], success: true };
+          },
+        );
+        (messageService.createMessage as any).mockImplementation(async (params: any) => {
+          const toolMessage = createMockMessage({ ...params, id: toolMessageId, role: 'tool' });
+          return { id: toolMessageId, messages: [userMessage, assistantMessage, toolMessage] };
+        });
+
+        // The moment the sub-agent executor is entered is the END of the
+        // bridge: sendMessage has already been completed, and only the bridge
+        // op spans the awaited message/config steps that led here. The spinner
+        // must not have blinked off across that window. The send created the
+        // topic (context.topicId is null in this fixture), so the id under
+        // test is the client-minted one — take it from the send's own
+        // (settled) operation context.
+        let runningAtSubAgentEntry: boolean | undefined;
+        let topicIdAtSubAgentEntry: string | undefined;
+        act(() => {
+          useChatStore.setState({
+            executeClientAgent: vi.fn().mockImplementation(async () => {
+              const s = useChatStore.getState();
+              topicIdAtSubAgentEntry =
+                Object.values(s.operations).find(
+                  (op) => op.type === 'sendMessage' && op.context.topicId,
+                )?.context.topicId ?? undefined;
+              runningAtSubAgentEntry = topicIdAtSubAgentEntry
+                ? operationSelectors.isTopicVisiblyRunning(topicIdAtSubAgentEntry)(s)
+                : undefined;
+            }),
+          });
+        });
+
+        await act(async () => {
+          await result.current.sendMessage({
+            message,
+            editorData: {
+              root: {
+                children: [
+                  {
+                    children: [
+                      {
+                        label: 'Agent B',
+                        metadata: { id: targetAgentId, type: 'agent' },
+                        type: 'mention',
+                      },
+                      { text: ' hello', type: 'text' },
+                    ],
+                    type: 'paragraph',
+                  },
+                ],
+                type: 'root',
+              },
+            } as any,
+            context: createTestContext(),
+          });
+        });
+
+        expect(useChatStore.getState().executeClientAgent).toHaveBeenCalled();
+        expect(topicIdAtSubAgentEntry).toBeTruthy();
+        expect(runningAtSubAgentEntry).toBe(true);
+        // Bridge completed with the send — no stuck spinner afterwards.
+        expect(
+          operationSelectors.isTopicVisiblyRunning(topicIdAtSubAgentEntry!)(
+            useChatStore.getState(),
+          ),
+        ).toBe(false);
+      });
+
       it('should route a single leading @agent through the gateway when gateway mode is enabled', async () => {
         const { result } = renderHook(() => useChatStore());
         const targetAgentId = 'agent-direct-target';

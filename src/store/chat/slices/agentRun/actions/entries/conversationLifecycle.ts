@@ -1747,6 +1747,11 @@ export class ConversationLifecycleActionImpl {
         apiName: AgentManagementApiName.callAgent,
         targetAgentId,
         tool_call_id: toolPayload.id,
+        // The parent sendMessage op is already completed when this bridge
+        // runs, and the sub-agent runtime op only starts after the awaited
+        // message/config steps below — without this flag the sidebar topic
+        // spinner (isTopicVisiblyRunning) blinks off for the whole hand-off.
+        topicRunningBridge: true,
       },
       parentOperationId,
       type: 'toolCalling',

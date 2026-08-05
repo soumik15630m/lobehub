@@ -733,6 +733,41 @@ describe('Operation Selectors', () => {
 
       expect(operationSelectors.isTopicVisiblyRunning('topic1')(result.current)).toBe(false);
     });
+
+    it('should count a toolCalling op only when it opts in as a topic-running bridge', () => {
+      const { result } = renderHook(() => useChatStore());
+
+      // Ordinary toolCalling (a child of a running runtime) must NOT count on
+      // its own — that would broaden "turn in progress" to every tool call.
+      act(() => {
+        result.current.startOperation({
+          type: 'toolCalling',
+          context: { agentId: 'agent1', topicId: 'topic1' },
+        });
+      });
+      expect(operationSelectors.isTopicVisiblyRunning('topic1')(result.current)).toBe(false);
+
+      // The direct-mention bridge opts in: sendMessage is already settled and
+      // the sub-agent runtime has not started yet, so this op is the only
+      // thing keeping the turn visibly in progress.
+      let bridgeOpId = '';
+      act(() => {
+        bridgeOpId = result.current.startOperation({
+          type: 'toolCalling',
+          context: { agentId: 'agent1', topicId: 'topic2' },
+          metadata: { topicRunningBridge: true },
+        }).operationId;
+      });
+      expect(operationSelectors.isTopicVisiblyRunning('topic2')(result.current)).toBe(true);
+      expect(operationSelectors.visiblyRunningTopicIds(result.current)).toEqual(
+        new Set(['topic2']),
+      );
+
+      act(() => {
+        result.current.completeOperation(bridgeOpId);
+      });
+      expect(operationSelectors.isTopicVisiblyRunning('topic2')(result.current)).toBe(false);
+    });
   });
 
   describe('visible loading selectors', () => {

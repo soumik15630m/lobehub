@@ -435,8 +435,24 @@ const isAgentVisiblyRunning =
   };
 
 /**
+ * Op types that can carry a turn's "visibly in progress" state for a topic:
+ * the send → run pipeline, plus `toolCalling` for bridge ops that explicitly
+ * opt in via `metadata.topicRunningBridge` (the direct-@mention route settles
+ * its `sendMessage` before the bridge spawns the sub-agent runtime, so without
+ * the bridge the spinner blinks off during that hand-off).
+ */
+const TOPIC_RUNNING_OPERATION_TYPES: OperationType[] = [
+  ...INPUT_LOADING_OPERATION_TYPES,
+  'toolCalling',
+];
+
+const isTopicRunningOperation = (op: Operation): boolean =>
+  isVisiblyRunningOperation(op) &&
+  (op.type !== 'toolCalling' || op.metadata.topicRunningBridge === true);
+
+/**
  * Whether a turn is visibly in progress for a topic on THIS client — the whole
- * send → run pipeline (see INPUT_LOADING_OPERATION_TYPES), matched by the
+ * send → run pipeline (see TOPIC_RUNNING_OPERATION_TYPES), matched by the
  * operation context's topicId regardless of agent/group/thread.
  *
  * Drives the sidebar topic spinner. Persisted `topic.status === 'running'`
@@ -447,11 +463,11 @@ const isAgentVisiblyRunning =
 const isTopicVisiblyRunning =
   (topicId: string) =>
   (s: ChatStoreState): boolean => {
-    for (const type of INPUT_LOADING_OPERATION_TYPES) {
+    for (const type of TOPIC_RUNNING_OPERATION_TYPES) {
       const operationIds = s.operationsByType[type] || [];
       const hasRunning = operationIds.some((id) => {
         const op = s.operations[id];
-        return op && isVisiblyRunningOperation(op) && op.context.topicId === topicId;
+        return op && isTopicRunningOperation(op) && op.context.topicId === topicId;
       });
       if (hasRunning) return true;
     }
@@ -466,10 +482,10 @@ const isTopicVisiblyRunning =
  */
 const visiblyRunningTopicIds = (s: ChatStoreState): Set<string> => {
   const ids = new Set<string>();
-  for (const type of INPUT_LOADING_OPERATION_TYPES) {
+  for (const type of TOPIC_RUNNING_OPERATION_TYPES) {
     for (const id of s.operationsByType[type] || []) {
       const op = s.operations[id];
-      if (op && isVisiblyRunningOperation(op) && op.context.topicId) {
+      if (op && isTopicRunningOperation(op) && op.context.topicId) {
         ids.add(op.context.topicId);
       }
     }

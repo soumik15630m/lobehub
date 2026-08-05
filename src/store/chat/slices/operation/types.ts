@@ -173,6 +173,15 @@ export interface OperationMetadata {
   streamRetry?: StreamRetryMetadata;
 
   /**
+   * This op is a routing bridge between a settled `sendMessage` and the child
+   * runtime op it will spawn (e.g. the direct-@mention callAgent bridge), so
+   * the topic-running selectors must count it — its type alone (`toolCalling`)
+   * is not part of the send→run pipeline. Opt-in per op: ordinary toolCalling
+   * children of a running runtime never set it.
+   */
+  topicRunningBridge?: boolean;
+
+  /**
    * The model text stream has finished and there is no visible follow-up phase
    * to wait for, but the runtime operation still needs its terminal lifecycle
    * (`agent_runtime_end`) for cache, queue, unread, and notification effects.
