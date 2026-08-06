@@ -263,6 +263,7 @@ describe('HeterogeneousAgentCtr', () => {
     codexAppServerConstructMock.mockReset();
     codexAppServerInterruptMock.mockReset();
     mockGetAllWindows.mockReset();
+    vi.mocked(existsSync).mockReturnValue(true);
     delete process.env.LOBE_CLAUDE_CODE_SDK;
     delete process.env.LOBE_CODEX_APP_SERVER;
   });
@@ -852,6 +853,32 @@ describe('HeterogeneousAgentCtr', () => {
       ).rejects.toThrow('Codex CLI was not found');
 
       expect(detect).toHaveBeenCalledWith('codex', true);
+      expect(spawnCalls).toHaveLength(0);
+    });
+
+    it('reports a missing working directory instead of claiming the Codex CLI is missing', async () => {
+      const missingCwd = '/tmp/lobehub-deleted-worktree';
+      vi.mocked(existsSync).mockImplementation((candidate) => candidate !== missingCwd);
+      const detect = vi.fn().mockResolvedValue({
+        available: true,
+        path: '/Applications/ChatGPT.app/Contents/Resources/codex',
+      });
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+        binaryManager: { detect },
+      } as any);
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        command: 'codex',
+        cwd: missingCwd,
+      });
+
+      await expect(
+        ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId }),
+      ).rejects.toThrow(`Working directory does not exist: ${missingCwd}`);
+
+      expect(detect).not.toHaveBeenCalled();
       expect(spawnCalls).toHaveLength(0);
     });
 
