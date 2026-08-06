@@ -22,7 +22,7 @@ describe('ElectronAppActionImpl', () => {
     it('syncs defaultShell into the global agent context so {{defaultShell}} flips without a restart', () => {
       // Regression: switching the Windows shell in settings only updated the
       // main process; the prompt placeholder kept describing the old shell
-      // until app restart (LOBE-12692).
+      // until app restart — the same sync gap that caused the prompt to keep describing the old shell after the user switched to Git Bash.
       act(() => {
         useElectronStore.getState().updateElectronAppState({ defaultShell: 'Git Bash' });
       });

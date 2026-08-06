@@ -62,7 +62,7 @@ export const resolveChatInputNotice = ({
 
   // Use-level General access (can chat, can't edit the shared config) is
   // deliberately NOT a notice: a standing "you can only use this agent" banner
-  // states a permission without naming what it blocks (LOBE-12547). The locked
+  // states a permission without naming what it blocks — the "you can only use this agent" message was meaningless as a standing banner. The locked
   // controls explain themselves instead — see `useModelLockTooltip` for the
   // model triggers and the fixed-target tooltip on the device chip.
 };

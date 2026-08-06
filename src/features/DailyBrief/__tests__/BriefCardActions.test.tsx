@@ -215,8 +215,8 @@ describe('BriefCardActions', () => {
     expect(screen.queryByText('Confirm', { exact: true })).not.toBeInTheDocument();
   });
 
-  // LOBE-12704: the tRPC client only console.errors non-401 failures, so a
-  // rejected action used to read as a dead button — which is how "no permission"
+  // The tRPC client only console.errors non-401 failures, so a
+  // rejected Brief action used to read as a dead button — which is how "no permission"
   // reached us as a bug report with no error on screen.
   it('should surface the failure reason when a resolve action is rejected', async () => {
     mockResolveBrief.mockRejectedValueOnce(

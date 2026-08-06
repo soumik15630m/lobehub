@@ -338,7 +338,7 @@ describe('messengerRouter.listMyInstallations', () => {
   // Telegram is an env/DB-backed singleton with no `messenger_installations`
   // row, and it stays absent here on purpose: this procedure doubles as
   // send-target discovery for the client tool adapter, which cannot act on a
-  // `messengerInstallationId` (LOBE-12706). Surfacing the singleton would let
+  // `messengerInstallationId` (the Message tool cannot route through a System Bot installation — only per-agent botId is executable end to end). Surfacing the singleton would let
   // the model pick a target that then fails with `No enabled bot found for
   // platform "telegram"`. Reaching the user themselves goes through
   // `sendMessengerPush` and never consults this list.
