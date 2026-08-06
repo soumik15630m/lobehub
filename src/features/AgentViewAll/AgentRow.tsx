@@ -1,7 +1,12 @@
 'use client';
 
 import { AGENT_CHAT_URL, DEFAULT_AVATAR, GROUP_CHAT_URL } from '@lobechat/const';
-import { agentDisplayName, type SidebarAgentItem } from '@lobechat/types';
+import { HETEROGENEOUS_TYPE_LABELS } from '@lobechat/heterogeneous-agents';
+import {
+  agentDisplayName,
+  agentSecondaryDisplayName,
+  type SidebarAgentItem,
+} from '@lobechat/types';
 import {
   ActionIcon,
   Avatar,
@@ -111,10 +116,10 @@ const AgentRow = memo<AgentRowProps>(
     const { id, type, updatedAt } = item;
     // Groups have no personal name, so this resolves to their title.
     const displayTitle = agentDisplayName(item, t('agentViewAll.untitled'));
-    // When the personal name won the label the role would otherwise vanish from
-    // this list entirely — keep it beside the name as a muted tag, the same way
-    // the sidebar row does. No tag when the label already IS the role.
-    const roleTag = item.name?.trim() && item.title?.trim() ? item.title : undefined;
+    const runtimeTag = item.heterogeneousType
+      ? (HETEROGENEOUS_TYPE_LABELS[item.heterogeneousType] ?? item.heterogeneousType)
+      : undefined;
+    const roleTag = agentSecondaryDisplayName(item, runtimeTag);
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
     // Right-click support (Task-List-style): the hook-bearing menu mounts on
