@@ -13,8 +13,20 @@ vi.mock('@lobechat/const', async (importOriginal) => ({
 }));
 
 vi.mock('@lobehub/ui', () => ({
-  DraggablePanel: ({ children, expand }: { children?: ReactNode; expand?: boolean }) => (
-    <div data-expand={String(expand)} data-testid="terminal-panel">
+  DraggablePanel: ({
+    children,
+    expand,
+    stableLayout = true,
+  }: {
+    children?: ReactNode;
+    expand?: boolean;
+    stableLayout?: boolean;
+  }) => (
+    <div
+      data-expand={String(expand)}
+      data-testid="terminal-panel"
+      style={{ height: expand ? 320 : stableLayout ? '100%' : 0 }}
+    >
       {children}
     </div>
   ),
@@ -45,8 +57,11 @@ describe('ChatTerminalPanel', () => {
     render(<ChatTerminalPanel />);
 
     // Closed: the panel is mounted (so it can animate) with expand=false,
-    // rather than returning null as the old implementation did.
+    // rather than returning null as the old implementation did. It must use
+    // the legacy DraggablePanel layout so the collapsed bottom panel does not
+    // retain the stable layout's full-height fixed aside.
     expect(screen.getByTestId('terminal-panel').dataset.expand).toBe('false');
+    expect(screen.getByTestId('terminal-panel')).toHaveStyle({ height: '0px' });
 
     setShow(true);
     await waitFor(() => expect(screen.getByTestId('terminal-panel').dataset.expand).toBe('true'));
