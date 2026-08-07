@@ -65,6 +65,9 @@ const ChatTerminalPanel = memo(() => {
       minHeight={160}
       placement={'bottom'}
       size={{ height, width: '100%' }}
+      // Stable layout makes the fixed aside full-height, which consumes this
+      // column even while a bottom panel is collapsed.
+      stableLayout={false}
       onSizeChange={(_, size) => {
         if (!size?.height) return;
         const next =
