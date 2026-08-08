@@ -1,15 +1,12 @@
-import {
-  type AgentLabelListItem,
-  type SidebarAgentItem,
-  type SidebarAgentLabel,
-  type SidebarGroup,
-} from '@lobechat/types';
+import { type AgentLabelListItem, type SidebarAgentLabel } from '@lobechat/types';
 import isEqual from 'fast-deep-equal';
 import { useEffect } from 'react';
 import { type SWRResponse } from 'swr';
 
+import { getClientDataStoreState } from '@/client-data';
 import { mutate, useClientDataSWR } from '@/libs/swr';
 import { agentLabelKeys } from '@/libs/swr/keys';
+import { getCacheScope } from '@/libs/swr/useCacheScope';
 import { agentLabelService } from '@/services/agentLabel';
 import { type HomeStore } from '@/store/home/store';
 import { type StoreSetter } from '@/store/types';
@@ -60,13 +57,9 @@ export class LabelActionImpl {
    * concurrent editor's assignment survives.
    */
   toggleAgentLabel = async (agentId: string, labelId: string, assigned: boolean): Promise<void> => {
-    const state = this.#get();
+    const agentRecord = getClientDataStoreState().scopes[getCacheScope()]?.entities.agent[agentId];
     const current = new Set(
-      [...state.agentGroups.flatMap((g) => g.items), ...state.pinnedAgents]
-        .concat(state.ungroupedAgents, state.privatePinnedAgents, state.privateUngroupedAgents)
-        .concat(state.privateAgentGroups.flatMap((g) => g.items))
-        .find((item) => item.id === agentId && item.type === 'agent')
-        ?.labels?.map((label) => label.id) ?? [],
+      agentRecord?.fragments.labels?.data.labels?.map((label) => label.id) ?? [],
     );
 
     if (assigned) current.add(labelId);
@@ -85,36 +78,18 @@ export class LabelActionImpl {
   };
 
   /**
-   * Optimistic: patch the agent's labels in every list bucket immediately —
-   * waiting for the mutation + full list refetch reads as lag. Name-sorted to
-   * match the server's ordering, so the refresh doesn't reshuffle.
+   * Optimistic: patch the agent's labels fragment in the canonical entity graph
+   * immediately — every sidebar bucket view derives from it, and waiting for
+   * the mutation + full list refetch reads as lag. Name-sorted to match the
+   * server's ordering, so the refresh doesn't reshuffle.
    */
   #patchAgentLabels = (agentId: string, labelIds: string[]) => {
-    const state = this.#get();
-    const nextLabels: SidebarAgentLabel[] = state.agentLabels
-      .filter((label) => labelIds.includes(label.id))
+    const nextLabels: SidebarAgentLabel[] = this.#get()
+      .agentLabels.filter((label) => labelIds.includes(label.id))
       .map(({ color, id, name }) => ({ color, id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    const patchItems = (items: SidebarAgentItem[]) =>
-      items.map((item) =>
-        item.id === agentId && item.type === 'agent' ? { ...item, labels: nextLabels } : item,
-      );
-    const patchGroups = (groups: SidebarGroup[]) =>
-      groups.map((group) => ({ ...group, items: patchItems(group.items) }));
-
-    this.#set(
-      {
-        agentGroups: patchGroups(state.agentGroups),
-        pinnedAgents: patchItems(state.pinnedAgents),
-        privateAgentGroups: patchGroups(state.privateAgentGroups),
-        privatePinnedAgents: patchItems(state.privatePinnedAgents),
-        privateUngroupedAgents: patchItems(state.privateUngroupedAgents),
-        ungroupedAgents: patchItems(state.ungroupedAgents),
-      },
-      false,
-      n('patchAgentLabels/optimistic'),
-    );
+    getClientDataStoreState().updateAgentEntityLabels(getCacheScope(), agentId, nextLabels);
   };
 
   setAgentLabels = async (agentId: string, labelIds: string[]): Promise<void> => {
