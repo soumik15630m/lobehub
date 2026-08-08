@@ -110,7 +110,9 @@ describe('applyClientDataCommit', () => {
     const durable = materializeDurableCommit(scope, { indexes: [index] });
 
     expect(
-      (scope.indexes as Record<string, { refs: unknown[] }>)['chat.sidebarTopics:agent-1'].refs,
+      (scope.indexes as unknown as Record<string, { refs: unknown[] }>)[
+        'chat.sidebarTopics:agent-1'
+      ].refs,
     ).toHaveLength(3);
     expect((durable.indexes[0] as { refs: unknown[] }).refs).toHaveLength(2);
   });
