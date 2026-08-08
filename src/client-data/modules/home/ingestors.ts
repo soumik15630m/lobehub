@@ -114,6 +114,7 @@ const sidebarRecord = (
         },
         observation,
       ),
+      labels: fragment({ labels: item.labels }, observation),
       profile: fragment({ description: item.description, slug: item.slug }, observation),
       routing: fragment({ sessionId: item.sessionId }, observation),
       runtime: fragment({ heterogeneousType: item.heterogeneousType }, observation),

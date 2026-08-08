@@ -1,8 +1,10 @@
 import type {
+  AgentEntityRecord,
   BriefItem,
   ChatTopicStatus,
   EntityFragment,
   EntitySource,
+  SidebarAgentLabel,
   TaskEntityRecord,
   TaskStatus,
   TopicEntityRecord,
@@ -28,6 +30,12 @@ const observation = (
 const fragment = <T>(data: T, meta: EntityObservation): EntityFragment<T> => ({ data, ...meta });
 
 export interface ClientDataEntityAction {
+  updateAgentEntityLabels: (
+    scope: string,
+    id: string,
+    labels: SidebarAgentLabel[],
+    observedAt?: number,
+  ) => void;
   updateBriefReadState: (
     scope: string,
     id: string,
@@ -59,6 +67,21 @@ class ClientDataEntityActionImpl implements ClientDataEntityAction {
     void _api;
     this.#get = get;
   }
+
+  updateAgentEntityLabels = (
+    scope: string,
+    id: string,
+    labels: SidebarAgentLabel[],
+    observedAt: number = Date.now(),
+  ): void => {
+    const meta = observation('mutation', observedAt);
+    const record: AgentEntityRecord = {
+      fragments: { labels: fragment({ labels }, meta) },
+      id,
+      kind: 'agent',
+    };
+    this.#get().internal_commitClientData(scope, { entities: [record] });
+  };
 
   updateTopicEntityStatus = (
     scope: string,

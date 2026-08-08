@@ -1,3 +1,4 @@
+import type { SidebarAgentLabel } from '../../home';
 import type { EntityAvatar, EntityVisibility } from './shared';
 
 export interface AgentEntityFragments {
@@ -10,6 +11,9 @@ export interface AgentEntityFragments {
     backgroundColor?: string | null;
     name?: string | null;
     title: string | null;
+  };
+  labels: {
+    labels?: SidebarAgentLabel[];
   };
   profile: {
     description?: string | null;

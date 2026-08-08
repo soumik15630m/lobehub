@@ -137,17 +137,18 @@ vi.mock('@lobechat/const', async (importOriginal) => ({
   randomAgentName: (...args: unknown[]) => mocks.randomAgentName(...(args as [])),
 }));
 
-vi.mock('@/store/home', () => {
-  const useHomeStore = (selector: (state: unknown) => unknown) =>
-    selector({ refreshAgentList: mocks.refreshAgentList });
-  useHomeStore.getState = () => ({ agents: mocks.sidebarAgents });
-  return { useHomeStore };
-});
+vi.mock('@/store/home', () => ({
+  useHomeStore: (selector: (state: unknown) => unknown) =>
+    selector({ refreshAgentList: mocks.refreshAgentList }),
+}));
 
-vi.mock('@/store/home/selectors', () => ({
-  homeAgentListSelectors: {
-    allAgents: (state: { agents: unknown[] }) => state.agents,
-  },
+vi.mock('@/client-data', () => ({
+  getClientDataStoreState: () => ({ scopes: {} }),
+  selectHomeSidebarAllAgents: () => mocks.sidebarAgents,
+}));
+
+vi.mock('@/libs/swr/useCacheScope', () => ({
+  getCacheScope: () => 'user-1:personal',
 }));
 
 vi.mock('@/store/file', () => ({
