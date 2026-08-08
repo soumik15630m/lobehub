@@ -16,9 +16,11 @@ const isSignature = (value: unknown): boolean =>
   (value.withDetails === undefined || typeof value.withDetails === 'boolean');
 
 export const isChatIndex = (value: unknown): value is ChatTopicsIndex => {
-  if (!isObject(value) || typeof value.key !== 'string' || !hasObservation(value)) return false;
-  const prefix = PREFIXES.find((candidate) => value.key.startsWith(candidate));
-  if (!prefix || value.key.length === prefix.length) return false;
+  if (!isObject(value)) return false;
+  const key = value.key;
+  if (typeof key !== 'string' || !hasObservation(value)) return false;
+  const prefix = PREFIXES.find((candidate) => key.startsWith(candidate));
+  if (!prefix || key.length === prefix.length) return false;
 
   return (
     Array.isArray(value.refs) &&
