@@ -128,6 +128,22 @@ describe('buildHeteroSpawnArgs', () => {
     ]);
   });
 
+  it('forwards Kimi Code native args and an explicit model through both spawn paths', () => {
+    const provider: HeterogeneousProviderConfig = {
+      args: ['--verbose'],
+      effort: 'high',
+      model: 'kimi-for-coding',
+      type: 'kimi-code',
+    };
+
+    expect(buildHeteroSpawnArgs(provider)).toEqual(['--verbose', '--model', 'kimi-for-coding']);
+    expect(buildHeteroExecArgs(provider)).toEqual([
+      '--agent-arg=--verbose',
+      '--model',
+      'kimi-for-coding',
+    ]);
+  });
+
   it('preserves a Qoder model from native args and does not inject Default', () => {
     expect(
       buildHeteroSpawnArgs({

@@ -114,6 +114,7 @@ export interface ResolveExecutionTargetOptions {
 /** Whether a heterogeneous provider can run in LobeHub's cloud sandbox. */
 export const isHeterogeneousSandboxExecutionAvailable = (type: string | undefined): boolean =>
   type !== 'amp' &&
+  type !== 'kimi-code' &&
   type !== 'hermes' &&
   type !== 'opencode' &&
   type !== 'openclaw' &&

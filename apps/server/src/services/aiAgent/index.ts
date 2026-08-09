@@ -2020,8 +2020,8 @@ export class AiAgentService {
     // 3.5. Hetero-agent early exit — local CLI and remote platform agents bypass the
     // server-side LLM pipeline.  After topic + message creation we hand off to
     // the device gateway (desktop) or cloud sandbox, which will push events
-    // back via `heteroIngest` / `heteroFinish` (amp / claude-code / codex / opencode / pi / qoder) or
-    // `agentNotify.notify` (openclaw / hermes).
+    // back via `heteroIngest` / `heteroFinish` (amp / claude-code / codex /
+    // kimi-code / opencode / pi / qoder) or `agentNotify.notify` (openclaw / hermes).
     //
     // Detection: prefer agencyConfig.heterogeneousProvider.type (set by the UI),
     // fall back to the legacy `model` field for backwards compatibility (shared
@@ -2327,6 +2327,7 @@ export class AiAgentService {
         heteroType === 'amp' ||
         heteroType === 'claude-code' ||
         heteroType === 'codex' ||
+        heteroType === 'kimi-code' ||
         heteroType === 'opencode' ||
         heteroType === 'pi' ||
         heteroType === 'qoder'
@@ -2549,8 +2550,9 @@ export class AiAgentService {
           };
         }
       } else {
-        // Local CLI hetero (Amp / Claude Code / Codex / OpenCode / Pi) — fork between device dispatch
-        // and cloud sandbox via the shared execution plan:
+        // Local CLI hetero (Amp / Claude Code / Codex / Kimi Code / OpenCode /
+        // Pi / Qoder) — fork between device dispatch and cloud sandbox via the
+        // shared execution plan:
         //   - requestedDeviceId (topic-level override) always wins
         //   - executionTarget 'device' → dispatch to boundDeviceId (errors if unset)
         //   - executionTarget 'local' + boundDeviceId (desktop sync opened on web)
@@ -2611,6 +2613,7 @@ export class AiAgentService {
               assistantMessageId: assistantMessageRecord.id,
               detail:
                 heteroType === 'amp' ||
+                heteroType === 'kimi-code' ||
                 heteroType === 'opencode' ||
                 heteroType === 'pi' ||
                 heteroType === 'qoder'

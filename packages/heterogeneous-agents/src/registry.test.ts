@@ -4,6 +4,7 @@ import {
   AmpAdapter,
   ClaudeCodeAdapter,
   CodexAdapter,
+  KimiCodeAdapter,
   OpenCodeAdapter,
   PiAdapter,
   QoderAdapter,
@@ -26,6 +27,10 @@ describe('registry', () => {
     it('creates a CodexAdapter for "codex"', () => {
       const adapter = createAdapter('codex');
       expect(adapter).toBeInstanceOf(CodexAdapter);
+    });
+
+    it('creates a KimiCodeAdapter for "kimi-code"', () => {
+      expect(createAdapter('kimi-code')).toBeInstanceOf(KimiCodeAdapter);
     });
 
     it('creates an OpenCodeAdapter for "opencode"', () => {

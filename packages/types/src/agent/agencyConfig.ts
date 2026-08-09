@@ -144,7 +144,7 @@ const CODEX_FAST_SERVICE_TIER_VALUES = ['fast', 'priority'] as const;
  *
  * Two families of hetero agents are supported:
  *
- * - **Local CLI** (`amp` | `claude-code` | `codex` | `opencode` | `pi` | `qoder`): spawned as a child
+ * - **Local CLI** (`amp` | `claude-code` | `codex` | `kimi-code` | `opencode` | `pi` | `qoder`): spawned as a child
  *   process on the desktop or a connected device; uses `command`, `args`, `env`,
  *   `systemContext`.
  *
@@ -521,6 +521,7 @@ export const buildHeteroSpawnArgs = (
   if (
     provider.type !== 'claude-code' &&
     provider.type !== 'codex' &&
+    provider.type !== 'kimi-code' &&
     provider.type !== 'opencode' &&
     provider.type !== 'pi' &&
     provider.type !== 'qoder'
@@ -570,6 +571,17 @@ export const buildHeteroSpawnArgs = (
     }
   }
 
+  if (provider.type === 'kimi-code') {
+    const model = provider.model?.trim();
+    if (
+      model &&
+      model !== HETEROGENEOUS_AGENT_DEFAULT_SELECTION &&
+      !hasCliFlag(baseArgs, '--model')
+    ) {
+      extraArgs.push('--model', model);
+    }
+  }
+
   if (provider.type === 'pi') {
     const model = provider.model?.trim();
     if (
@@ -614,6 +626,7 @@ export const buildHeteroExecArgs = (
     provider.type !== 'amp' &&
     provider.type !== 'claude-code' &&
     provider.type !== 'codex' &&
+    provider.type !== 'kimi-code' &&
     provider.type !== 'opencode' &&
     provider.type !== 'pi' &&
     provider.type !== 'qoder'
@@ -667,6 +680,17 @@ export const buildHeteroExecArgs = (
       model &&
       model !== HETEROGENEOUS_AGENT_DEFAULT_SELECTION &&
       !hasAnyCliFlag(baseArgs, OPENCODE_MODEL_FLAGS)
+    ) {
+      selectorArgs.push('--model', model);
+    }
+  }
+
+  if (provider.type === 'kimi-code') {
+    const model = provider.model?.trim();
+    if (
+      model &&
+      model !== HETEROGENEOUS_AGENT_DEFAULT_SELECTION &&
+      !hasCliFlag(baseArgs, '--model')
     ) {
       selectorArgs.push('--model', model);
     }

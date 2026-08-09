@@ -828,6 +828,17 @@ export default {
   'qoderInstallGuide.menuNotification.title': 'Qoder CLI not found',
   'qoderInstallGuide.reason': 'LobeHub could not start Qoder: {{message}}',
   'qoderInstallGuide.title': 'Install Qoder CLI',
+  'kimiCodeInstallGuide.actions.openDocs': 'Open Install Guide',
+  'kimiCodeInstallGuide.actions.openSystemTools': 'Open System Tools',
+  'kimiCodeInstallGuide.afterInstall':
+    'After installing, run `kimi` and use `/login`, then retry your message or click Re-detect in System Tools.',
+  'kimiCodeInstallGuide.desc':
+    'Kimi Code needs its CLI to run locally. Install it and make sure the kimi command is available in your PATH.',
+  'kimiCodeInstallGuide.installWithBrew': 'Windows PowerShell',
+  'kimiCodeInstallGuide.installWithNpm': 'Recommended install',
+  'kimiCodeInstallGuide.menuNotification.title': 'Kimi Code CLI not found',
+  'kimiCodeInstallGuide.reason': 'LobeHub could not start Kimi Code: {{message}}',
+  'kimiCodeInstallGuide.title': 'Install Kimi Code CLI',
   'addAgent': 'Add Agent',
   'addAgentFromList': 'Add from Agent list',
   'addAgentFromMarket': 'Add from Market',
@@ -840,6 +851,7 @@ export default {
   'newQoderAgent': 'Add Qoder',
   'newPlatformAgent': 'Connect an Agent',
   'newPlatformAgentDesc': 'Connect Claude Code, Codex, Hermes, OpenClaw, and other agents',
+  'newKimiCodeAgent': 'Add Kimi Code',
   'newGroupChat': 'Create Group',
   'agent.publishToWorkspace': 'Publish to Workspace',
   'agent.publishToWorkspaceErrorFixedPrivateDevice':
@@ -921,6 +933,7 @@ export default {
   'connectAgent.providerDesc.claude-code': 'Anthropic coding agent CLI',
   'connectAgent.providerDesc.codex': 'OpenAI coding agent CLI',
   'connectAgent.providerDesc.amp': 'Sourcegraph coding agent CLI',
+  'connectAgent.providerDesc.kimi-code': 'Moonshot AI coding agent CLI',
   'connectAgent.providerDesc.opencode': 'Open-source coding agent CLI',
   'connectAgent.providerDesc.pi': 'Minimal coding agent CLI',
   'connectAgent.providerDesc.qoder': 'Qoder coding agent CLI',

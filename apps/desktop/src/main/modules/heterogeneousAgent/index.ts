@@ -3,6 +3,7 @@ import type { LocalHeterogeneousAgentType } from '@lobechat/heterogeneous-agents
 import { ampDriver } from './drivers/amp';
 import { claudeCodeDriver } from './drivers/claudeCode';
 import { codexDriver } from './drivers/codex';
+import { kimiCodeDriver } from './drivers/kimiCode';
 import { opencodeDriver } from './drivers/opencode';
 import { piDriver } from './drivers/pi';
 import { qoderDriver } from './drivers/qoder';
@@ -12,6 +13,7 @@ const heterogeneousAgentDrivers = {
   'amp': ampDriver,
   'claude-code': claudeCodeDriver,
   'codex': codexDriver,
+  'kimi-code': kimiCodeDriver,
   'opencode': opencodeDriver,
   'pi': piDriver,
   'qoder': qoderDriver,
