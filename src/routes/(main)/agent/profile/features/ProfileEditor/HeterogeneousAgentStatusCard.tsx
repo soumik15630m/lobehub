@@ -236,6 +236,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       (provider.type === 'amp' ||
         provider.type === 'claude-code' ||
         provider.type === 'codex' ||
+        provider.type === 'kimi-code' ||
         provider.type === 'opencode' ||
         provider.type === 'pi' ||
         provider.type === 'qoder') &&

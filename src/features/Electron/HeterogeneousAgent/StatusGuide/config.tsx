@@ -1,6 +1,6 @@
 import type { LocalHeterogeneousAgentType } from '@lobechat/heterogeneous-agents';
 import { HETEROGENEOUS_AGENT_CONFIGS } from '@lobechat/heterogeneous-agents';
-import { Amp, ClaudeCode, Codex, OpenCode, Pi, Qoder } from '@lobehub/icons';
+import { Amp, ClaudeCode, Codex, Kimi, OpenCode, Pi, Qoder } from '@lobehub/icons';
 
 import {
   type HeterogeneousAgentGuideConfig,
@@ -20,6 +20,10 @@ const GUIDE_PRESENTATION_CONFIG = {
   'codex': {
     icon: Codex,
     translationPrefix: 'codexInstallGuide',
+  },
+  'kimi-code': {
+    icon: Kimi,
+    translationPrefix: 'kimiCodeInstallGuide',
   },
   'opencode': {
     icon: OpenCode,

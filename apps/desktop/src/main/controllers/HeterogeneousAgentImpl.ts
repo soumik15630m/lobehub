@@ -144,6 +144,31 @@ const HETERO_RUNTIME_LAB_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const waitForHeteroSessionCompleteGrace = () =>
   new Promise<void>((resolve) => setTimeout(resolve, HETERO_SESSION_COMPLETE_GRACE_MS));
 
+export const redactPromptArgs = (
+  args: string[],
+  agentType: HeterogeneousCliAgentType,
+): string[] => {
+  let redactNext = false;
+  const supportsShortPromptFlag = agentType === 'kimi-code';
+
+  return args.map((arg) => {
+    if (redactNext) {
+      redactNext = false;
+      return '[REDACTED]';
+    }
+
+    if (arg === '--prompt' || (supportsShortPromptFlag && arg === '-p')) {
+      redactNext = true;
+      return arg;
+    }
+
+    if (arg.startsWith('--prompt=')) return '--prompt=[REDACTED]';
+    if (supportsShortPromptFlag && arg.startsWith('-p=')) return '-p=[REDACTED]';
+
+    return arg;
+  });
+};
+
 // ─── IPC types ───
 
 interface StartSessionParams {
@@ -729,7 +754,7 @@ export default class HeterogeneousAgentCtr {
           {
             agentSessionId: session.agentSessionId,
             agentType: session.agentType,
-            args: cliArgs,
+            args: redactPromptArgs(cliArgs, session.agentType),
             attachments: imageList.map((image) => this.getAttachmentTraceSummary(image)),
             command: session.command,
             createdAt: createdAt.toISOString(),
@@ -1173,7 +1198,7 @@ export default class HeterogeneousAgentCtr {
     logger.info(
       'Spawning agent:',
       resolvedCliSpawnPlan.command,
-      resolvedCliSpawnPlan.args.join(' '),
+      redactPromptArgs(resolvedCliSpawnPlan.args, session.agentType).join(' '),
       `(cwd: ${cwd})`,
     );
 

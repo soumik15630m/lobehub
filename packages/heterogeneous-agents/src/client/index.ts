@@ -1,5 +1,5 @@
 import type { IconType } from '@lobehub/icons';
-import { Amp, ClaudeCode, Codex, getLobeIconCDN, OpenCode, Pi, Qoder } from '@lobehub/icons';
+import { Amp, ClaudeCode, Codex, getLobeIconCDN, Kimi, OpenCode, Pi, Qoder } from '@lobehub/icons';
 
 import {
   getHeterogeneousAgentConfig,
@@ -18,6 +18,7 @@ const heterogeneousAgentIcons = {
   'amp': Amp,
   'claude-code': ClaudeCode,
   'codex': Codex,
+  'kimi-code': Kimi,
   'opencode': OpenCode,
   'pi': Pi,
   'qoder': Qoder,

@@ -18,6 +18,10 @@ const ampCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfi
   heterogeneousProvider: { command: 'amp', type: 'amp' },
   ...over,
 });
+const kimiCodeCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfig => ({
+  heterogeneousProvider: { command: 'kimi', type: 'kimi-code' },
+  ...over,
+});
 const openCodeCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfig => ({
   heterogeneousProvider: { command: 'opencode', type: 'opencode' },
   ...over,
@@ -182,6 +186,7 @@ describe('resolveExecutionTarget', () => {
   describe('hetero providers without sandbox execution', () => {
     it.each([
       ['Amp', ampCfg],
+      ['Kimi Code', kimiCodeCfg],
       ['OpenCode', openCodeCfg],
       ['Pi', piCfg],
       ['Qoder', qoderCfg],
@@ -206,6 +211,17 @@ describe('resolveExecutionTarget', () => {
       for (const executionTarget of ['sandbox', 'local'] as const) {
         expect(
           resolveExecutionTarget(ampCfg({ executionTarget }), {
+            clientExecutionAvailable: false,
+            isHetero: true,
+          }),
+        ).toBe('none');
+      }
+    });
+
+    it('normalizes unsupported Kimi Code sandbox and unbound web-local targets to pending', () => {
+      for (const executionTarget of ['sandbox', 'local'] as const) {
+        expect(
+          resolveExecutionTarget(kimiCodeCfg({ executionTarget }), {
             clientExecutionAvailable: false,
             isHetero: true,
           }),

@@ -308,6 +308,21 @@ describe('spawnAgent', () => {
     expect(args[0]).toBe('exec');
   });
 
+  it('rejects an oversized Windows Kimi prompt before spawning the process', async () => {
+    platformMock.mockReturnValue('win32');
+    callExecFile('C:\\Tools\\kimi.exe\r\n');
+
+    const { spawnAgent } = await import('./spawnAgent');
+    await expect(
+      spawnAgent({
+        agentType: 'kimi-code',
+        operationId: 'op-1',
+        prompt: 'a'.repeat(33_000),
+      }),
+    ).rejects.toThrow(/Shorten the prompt or conversation context/);
+    expect(spawnCalls).toHaveLength(0);
+  });
+
   it('kills the native agent tree but leaves the wrapper alive on Windows cancellation', async () => {
     platformMock.mockReturnValue('win32');
     callExecFile('C:\\Tools\\codex.exe\r\n');
@@ -362,6 +377,31 @@ describe('spawnAgent', () => {
       'anthropic/claude-sonnet-4',
     ]);
     expect((nextFakeProc as any).stdin.write.mock.calls[0][0]).toBe('hello opencode');
+  });
+
+  it('spawns Kimi Code fresh and resumed with prompt only in argv', async () => {
+    nextFakeProc = createFakeProc().proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({
+      agentType: 'kimi-code',
+      extraArgs: ['--model', 'kimi-for-coding'],
+      operationId: 'op-kimi',
+      prompt: 'private prompt',
+      resumeSessionId: 'kimi-session',
+    });
+
+    expect(spawnCalls[0]).toMatchObject({ command: 'kimi' });
+    expect(spawnCalls[0].args).toEqual([
+      '--output-format',
+      'stream-json',
+      '--session',
+      'kimi-session',
+      '--model',
+      'kimi-for-coding',
+      '--prompt',
+      'private prompt',
+    ]);
+    expect((nextFakeProc as any).stdin.write.mock.calls[0][0]).toBe('');
   });
 
   it('spawns OpenCode resume with --session and --file before extra args', async () => {

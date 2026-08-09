@@ -111,13 +111,15 @@ describe('hetero exec command', () => {
             ? 'amp'
             : agentType === 'codex'
               ? 'codex'
-              : agentType === 'opencode'
-                ? 'opencode'
-                : agentType === 'pi'
-                  ? 'pi'
-                  : agentType === 'qoder'
-                    ? 'qodercli'
-                    : 'claude'),
+              : agentType === 'kimi-code'
+                ? 'kimi'
+                : agentType === 'opencode'
+                  ? 'opencode'
+                  : agentType === 'pi'
+                    ? 'pi'
+                    : agentType === 'qoder'
+                      ? 'qodercli'
+                      : 'claude'),
       }),
     );
     mockSpawnAgent.mockReset();
@@ -234,6 +236,33 @@ describe('hetero exec command', () => {
         agentType: 'qoder',
         command: 'qodercli',
         extraArgs: ['--model', 'Claude Sonnet 4.5'],
+        prompt: 'do thing',
+      }),
+    );
+  });
+
+  it('runs Kimi Code with its default command and forwards model but not effort', async () => {
+    mockSpawnAgent.mockReturnValue(createFakeHandle());
+
+    await runCmd([
+      'hetero',
+      'exec',
+      '--type',
+      'kimi-code',
+      '--prompt',
+      'do thing',
+      '--model',
+      'kimi-for-coding',
+      '--effort',
+      'high',
+    ]);
+
+    expect(mockResolveHeteroSpawnCommand).toHaveBeenCalledWith('kimi-code', undefined);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: 'kimi-code',
+        command: 'kimi',
+        extraArgs: ['--model', 'kimi-for-coding'],
         prompt: 'do thing',
       }),
     );
