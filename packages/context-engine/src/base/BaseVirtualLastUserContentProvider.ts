@@ -1,10 +1,7 @@
 import type { Message, PipelineContext, ProcessorOptions } from '../types';
 import { BaseProcessor } from './BaseProcessor';
-
-/**
- * Marker to identify runtime-injected virtual last-user messages.
- */
-const VIRTUAL_LAST_USER_MARKER = 'virtualLastUser';
+import { VIRTUAL_LAST_USER_MARKER } from './constants';
+import { wrapWithSystemContext } from './systemContext';
 
 /**
  * Base provider for injecting content at the virtual "last user" position.
@@ -23,6 +20,19 @@ export abstract class BaseVirtualLastUserContentProvider extends BaseProcessor {
   }
 
   /**
+   * Whether this provider may append its content to a *real* (user-authored) last message.
+   *
+   * Defaults to `true` for guidance that only ever appears on the turn it is built for.
+   * Providers whose content changes on every step — TODO state, progress counters — must
+   * override this to `false`: on the first turn of a topic the real user message *is* the
+   * last message, so appending there would rewrite a message that the rest of the run wants
+   * to keep byte-identical for prefix caching.
+   */
+  protected get appendToRealLastUser(): boolean {
+    return true;
+  }
+
+  /**
    * Build the content to inject.
    */
   protected abstract buildContent(context: PipelineContext): string | null;
@@ -32,6 +42,25 @@ export abstract class BaseVirtualLastUserContentProvider extends BaseProcessor {
    */
   protected shouldSkip(_context: PipelineContext): boolean {
     return false;
+  }
+
+  /**
+   * Hook invoked after content has been injected, for metadata bookkeeping.
+   */
+  protected onInjected(_context: PipelineContext): void {}
+
+  /**
+   * Whether a message is a synthetic tail message created by this base class.
+   */
+  protected isVirtualLastUserMessage(message: Message | undefined): boolean {
+    return message?.role === 'user' && message.meta?.[VIRTUAL_LAST_USER_MARKER] === true;
+  }
+
+  /**
+   * Wrap content with the shared system-context markers.
+   */
+  protected wrapWithSystemContext(content: string, contextType: string): string {
+    return wrapWithSystemContext(content, contextType);
   }
 
   /**
@@ -112,16 +141,20 @@ export abstract class BaseVirtualLastUserContentProvider extends BaseProcessor {
 
     const clonedContext = this.cloneContext(context);
     const lastMessage = clonedContext.messages.at(-1);
+    const canAppend =
+      lastMessage?.role === 'user' &&
+      (this.appendToRealLastUser || this.isVirtualLastUserMessage(lastMessage));
 
-    if (lastMessage?.role === 'user') {
+    if (canAppend) {
       clonedContext.messages[clonedContext.messages.length - 1] = this.appendToMessage(
-        lastMessage,
+        lastMessage!,
         content,
       );
-      return this.markAsExecuted(clonedContext);
+    } else {
+      clonedContext.messages.push(this.createVirtualLastUserMessage(content));
     }
 
-    clonedContext.messages.push(this.createVirtualLastUserMessage(content));
+    this.onInjected(clonedContext);
 
     return this.markAsExecuted(clonedContext);
   }

@@ -10,6 +10,15 @@ export const SYSTEM_CONTEXT_START = '<!-- SYSTEM CONTEXT (NOT PART OF USER QUERY
 export const SYSTEM_CONTEXT_END = '<!-- END SYSTEM CONTEXT -->';
 
 /**
+ * Marker used on `message.meta` to identify runtime-injected virtual last-user messages.
+ *
+ * Providers that append to a *historical* user message must skip messages carrying this
+ * marker: a virtual tail message is high-churn by design, so folding stable content into
+ * it would drag that content out of the cacheable prefix on every step.
+ */
+export const VIRTUAL_LAST_USER_MARKER = 'virtualLastUser';
+
+/**
  * Context instruction text
  * Provides guidance to the model on how to handle injected context
  */

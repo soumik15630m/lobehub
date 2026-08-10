@@ -418,8 +418,6 @@ export class MessagesEngine {
         contextPrompt: initialContext?.taskManager?.contextPrompt,
         enabled: !!initialContext?.taskManager?.contextPrompt,
       }),
-      // Todo list (at end of last user message)
-      new TodoInjector({ enabled: isTodoEnabled, todos: effectiveTodos }),
       // Topic Reference context (referenced topic summaries to last user message)
       new TopicReferenceContextInjector({
         enabled: !!(topicReferences && topicReferences.length > 0),
@@ -441,6 +439,9 @@ export class MessagesEngine {
         enabled: !!onboardingContext?.phaseGuidance,
         onboardingContext,
       }),
+      // Todo list — rewritten on every create/update/clear, so it belongs on the virtual
+      // tail rather than on the historical user message it used to be appended to.
+      new TodoInjector({ enabled: isTodoEnabled, todos: effectiveTodos }),
       new RuntimeAdditionalContextProvider({ additionalContexts }),
 
       // =============================================

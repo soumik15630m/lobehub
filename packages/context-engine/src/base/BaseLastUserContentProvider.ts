@@ -1,6 +1,7 @@
 import type { Message, PipelineContext, ProcessorOptions } from '../types';
 import { BaseProcessor } from './BaseProcessor';
-import { CONTEXT_INSTRUCTION, SYSTEM_CONTEXT_END, SYSTEM_CONTEXT_START } from './constants';
+import { SYSTEM_CONTEXT_END, SYSTEM_CONTEXT_START, VIRTUAL_LAST_USER_MARKER } from './constants';
+import { createContextBlock, wrapWithSystemContext } from './systemContext';
 
 /**
  * Base Provider for appending content to the last user message
@@ -12,13 +13,18 @@ export abstract class BaseLastUserContentProvider extends BaseProcessor {
   }
 
   /**
-   * Find the index of the last user message
+   * Find the index of the last *real* user message.
+   *
+   * Virtual tail messages (injected by `BaseVirtualLastUserContentProvider` subclasses) are
+   * skipped: they are high-churn by design, so appending stable context to them would push
+   * that context outside the provider-side cacheable prefix on every step.
    */
   protected findLastUserMessageIndex(messages: Message[]): number {
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        return i;
-      }
+      const message = messages[i];
+      if (message.role !== 'user') continue;
+      if (message.meta?.[VIRTUAL_LAST_USER_MARKER] === true) continue;
+      return i;
     }
     return -1;
   }
@@ -148,20 +154,13 @@ export abstract class BaseLastUserContentProvider extends BaseProcessor {
    * Following the format from @lobechat/prompts files/index.ts
    */
   protected wrapWithSystemContext(content: string, contextType: string): string {
-    return `${SYSTEM_CONTEXT_START}
-${CONTEXT_INSTRUCTION}
-<${contextType}>
-${content}
-</${contextType}>
-${SYSTEM_CONTEXT_END}`;
+    return wrapWithSystemContext(content, contextType);
   }
 
   /**
    * Create a context block without the full wrapper (for inserting into existing wrapper)
    */
   protected createContextBlock(content: string, contextType: string): string {
-    return `<${contextType}>
-${content}
-</${contextType}>`;
+    return createContextBlock(content, contextType);
   }
 }
