@@ -140,14 +140,14 @@ Business builds enable Gateway Mode automatically. Self-hosted deployments can s
 
 - Type: Optional
 - Description: Default hard timeout (in milliseconds) for sub-agent runs spawned by an agent (e.g. via `callSubAgent`), applied when the spawning tool call passes no explicit `timeout`. When the deadline passes, the sub-agent is interrupted and the parent resumes with a timeout result.
-- Default: `1800000` (30 minutes)
+- Default: `7200000` (2 hours)
 - Example: `600000`
 
 ### `SUB_AGENT_MAX_STEPS`
 
 - Type: Optional
-- Description: Step limit for sub-agent runs. Unset means no step limit — a long run is not itself a failure signal, and runaway sub-agents are already bounded by the timeout. Set it to additionally cap execution steps on resource-constrained deployments.
-- Default: -
+- Description: Step limit for sub-agent runs. Reaching the cap ends the run gracefully — the sub-agent is asked to summarize instead of being hard-killed. Lower it to cap execution steps on resource-constrained deployments.
+- Default: `1000`
 - Example: `200`
 
 ### `PROXY_URL`
