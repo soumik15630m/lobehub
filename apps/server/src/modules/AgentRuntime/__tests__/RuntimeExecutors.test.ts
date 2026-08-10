@@ -2190,9 +2190,12 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           state,
         );
 
-        return mockChat.mock.calls[0][0].messages.find(
-          (message: { role?: string }) => message.role === 'user',
-        )?.content as string;
+        // TODO state lands on the virtual tail user message, the original user turn stays
+        // untouched — so assert against every user-role message the request carries.
+        return mockChat.mock.calls[0][0].messages
+          .filter((message: { role?: string }) => message.role === 'user')
+          .map((message: { content?: unknown }) => String(message.content))
+          .join('\n\n') as string;
       };
 
       it('injects the newest valid message TODO state and skips Notebook', async () => {

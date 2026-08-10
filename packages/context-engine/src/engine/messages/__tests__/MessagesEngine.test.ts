@@ -82,13 +82,21 @@ describe('MessagesEngine', () => {
         updatedAt: 'metadata-time',
       };
 
-      it('injects stepContext.todos without a plan configuration', async () => {
+      const allContent = (messages: { content: any }[]) =>
+        messages.map((message) => JSON.stringify(message.content)).join('\n');
+
+      it('injects stepContext.todos into the virtual tail without a plan configuration', async () => {
         const result = await new MessagesEngine(
           createBasicParams({ stepContext: { todos: messageTodos } }),
         ).process();
 
-        expect(result.messages[0].content).toContain('<todo_context>');
-        expect(result.messages[0].content).toContain('Message task');
+        const tail = result.messages.at(-1)!;
+        expect(tail.role).toBe('user');
+        expect(tail.content).toContain('<todo_context>');
+        expect(tail.content).toContain('Message task');
+
+        // the historical user message must stay byte-identical so the prefix stays cacheable
+        expect(result.messages[0].content).toBe('Hello');
       });
 
       it('prefers message state over plan metadata', async () => {
@@ -99,8 +107,8 @@ describe('MessagesEngine', () => {
           }),
         ).process();
 
-        expect(result.messages[0].content).toContain('Message task');
-        expect(result.messages[0].content).not.toContain('Metadata task');
+        expect(result.messages.at(-1)!.content).toContain('Message task');
+        expect(allContent(result.messages)).not.toContain('Metadata task');
       });
 
       it('uses an empty message tombstone to suppress non-empty metadata', async () => {
@@ -111,8 +119,8 @@ describe('MessagesEngine', () => {
           }),
         ).process();
 
-        expect(result.messages[0].content).not.toContain('<todo_context>');
-        expect(result.messages[0].content).not.toContain('Metadata task');
+        expect(allContent(result.messages)).not.toContain('<todo_context>');
+        expect(allContent(result.messages)).not.toContain('Metadata task');
       });
 
       it('falls back to enabled plan metadata when message state is undefined', async () => {
@@ -120,7 +128,8 @@ describe('MessagesEngine', () => {
           createBasicParams({ planTodo: { enabled: true, todos: metadataTodos } }),
         ).process();
 
-        expect(result.messages[0].content).toContain('Metadata task');
+        expect(result.messages.at(-1)!.content).toContain('Metadata task');
+        expect(result.messages[0].content).toBe('Hello');
       });
     });
 

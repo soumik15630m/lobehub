@@ -35,17 +35,20 @@ describe('serverMessagesEngine', () => {
   describe('TODO context', () => {
     const items = [{ status: 'processing' as const, text: 'Keep server context in sync' }];
 
-    it('forwards non-empty planTodo state to MessagesEngine', async () => {
+    it('forwards non-empty planTodo state to the virtual tail message', async () => {
       const result = await serverMessagesEngine({
         messages: createBasicMessages(),
         model: 'gpt-4',
         planTodo: { enabled: true, todos: { items, updatedAt: 'now' } },
         provider: 'openai',
       });
-      const userContent = result.find((message) => message.role === 'user')?.content;
+      const tailContent = result.at(-1)?.content;
 
-      expect(userContent).toContain('<todo_context>');
-      expect(userContent).toContain('Keep server context in sync');
+      expect(result.at(-1)?.role).toBe('user');
+      expect(tailContent).toContain('<todo_context>');
+      expect(tailContent).toContain('Keep server context in sync');
+      // the historical user message keeps its original bytes so the prefix stays cacheable
+      expect(result.find((message) => message.role === 'user')?.content).toBe('Hello');
     });
 
     it('does not inject an empty TODO state', async () => {
@@ -56,7 +59,7 @@ describe('serverMessagesEngine', () => {
         provider: 'openai',
       });
 
-      expect(result.find((message) => message.role === 'user')?.content).not.toContain(
+      expect(result.map((message) => String(message.content)).join('\n')).not.toContain(
         '<todo_context>',
       );
     });
@@ -77,9 +80,13 @@ describe('serverMessagesEngine', () => {
         provider: 'openai',
       });
 
-      expect(serverResult.find((message) => message.role === 'user')?.content).toBe(
-        clientResult.messages.find((message) => message.role === 'user')?.content,
-      );
+      // same content AND same position — both paths must put TODO on the tail
+      const userContents = (messages: { content: any; role: string }[]) =>
+        messages.filter((message) => message.role === 'user').map((message) => message.content);
+
+      expect(userContents(serverResult)).toEqual(userContents(clientResult.messages as any));
+      expect(serverResult.at(-1)?.content).toContain('<todo_context>');
+      expect(clientResult.messages.at(-1)?.content).toContain('<todo_context>');
     });
   });
 
