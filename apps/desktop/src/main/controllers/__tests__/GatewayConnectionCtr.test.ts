@@ -1070,6 +1070,7 @@ describe('GatewayConnectionCtr', () => {
       const messageArg = spawnArgs[spawnArgs.indexOf('--message') + 1];
       expect(messageArg).toContain('hello');
       expect(messageArg).toContain('lh notify');
+      expect(messageArg).toContain('--operation-id op-1');
     });
 
     it.each([
@@ -1377,6 +1378,7 @@ describe('GatewayConnectionCtr', () => {
         expect(notifySpy).toHaveBeenCalledWith(
           expect.objectContaining({
             content: 'session_id: part of the final answer\nHello from Hermes',
+            operationId: 'op-hermes-1',
             topicId: 'topic-hermes',
           }),
         );
