@@ -28,8 +28,8 @@ export type AgentStreamEventType =
    * `tool_execute` — that one means "client, please run this tool"; this
    * one means "user, please answer these questions". Renderer surfaces a
    * dedicated UI; the producer's MCP handler stays pending until the
-   * paired `agent_intervention_response` resolves it (or the deadline
-   * passes / the op is cancelled).
+   * paired `agent_intervention_response` resolves it (or an optional
+   * deadline passes / the op is cancelled).
    */
   | 'agent_intervention_request'
   /**
@@ -186,15 +186,15 @@ export interface SubAgentProgressData extends StepCompleteData {
  * Producer → consumer: structured-input request the user must answer
  * directly (no tool execution involved). The producer's tool handler stays
  * blocked until a matching `agent_intervention_response` (correlated by
- * `toolCallId`) flows back, or the `deadline` is reached.
+ * `toolCallId`) flows back, or an optional `deadline` is reached.
  */
 export interface AgentInterventionRequestData {
   /** Tool API name (e.g. `'askUserQuestion'`). */
   apiName: string;
   /** JSON-encoded payload the UI renders (e.g. `{ questions: [...] }`). */
   arguments: string;
-  /** Unix-ms wall-clock at which the producer will give up waiting. */
-  deadline: number;
+  /** Unix-ms wall-clock at which the producer will give up waiting, when bounded. */
+  deadline?: number;
   /** Tool plugin identifier (e.g. `'claude-code'`). */
   identifier: string;
   /** Correlation key. Stable for the lifetime of the intervention. */

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeAskUserQuestions } from './normalize';
+import { normalizeAskUserDescription, normalizeAskUserQuestions } from './normalize';
+
+describe('normalizeAskUserDescription', () => {
+  it('preserves only string form descriptions', () => {
+    expect(normalizeAskUserDescription({ description: 'Configure connector' })).toBe(
+      'Configure connector',
+    );
+    expect(normalizeAskUserDescription(JSON.stringify({ description: 'Consent required' }))).toBe(
+      'Consent required',
+    );
+    expect(normalizeAskUserDescription({ description: 42 })).toBeUndefined();
+  });
+});
 
 describe('normalizeAskUserQuestions', () => {
   it('keeps valid question arrays', () => {

@@ -41,6 +41,8 @@ export interface AskUserQuestionArgs {
   allowEscape?: boolean;
   /** Absolute Unix-ms deadline supplied by bridge-backed interaction hosts. */
   deadline?: number;
+  /** Form-level context explaining why the caller needs these answers. */
+  description?: string;
   questions: AskUserQuestionItem[];
 }
 

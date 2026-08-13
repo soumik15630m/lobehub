@@ -998,7 +998,7 @@ describe('CodexAppServerSession', () => {
     const onIntervention = vi.fn(async ({ arguments: { questions } }) => ({
       result:
         questions[0].id === 'scope'
-          ? { scope: 'All', target: 'File' }
+          ? { __freeform__: 'Do everything', scope: 'All' }
           : invalidAnswers[questions[0].id]
             ? { [questions[0].id]: invalidAnswers[questions[0].id] }
             : {
@@ -1063,7 +1063,7 @@ describe('CodexAppServerSession', () => {
       expect(requests).toContainEqual({
         id: 'input-1',
         result: {
-          answers: { scope: { answers: ['All'] }, target: { answers: ['File'] } },
+          answers: { scope: { answers: ['All'] }, target: { answers: [] } },
         },
       }),
     );
@@ -1235,23 +1235,26 @@ describe('CodexAppServerSession', () => {
     await run;
 
     expect(onIntervention).toHaveBeenCalledTimes(6);
-    expect(onIntervention.mock.calls[0][0]).toEqual(
+    const userInputRequest = onIntervention.mock.calls[0][0];
+    expect(userInputRequest).toEqual(
       expect.objectContaining({
         arguments: expect.objectContaining({
-          deadline: expect.any(Number),
+          allowEscape: false,
           questions: expect.arrayContaining([
             expect.objectContaining({ id: 'scope' }),
             expect.objectContaining({ allowCustom: false, id: 'target' }),
           ]),
         }),
-        timeoutMs: expect.any(Number),
+        timeoutMs: null,
       }),
     );
+    expect(userInputRequest.arguments).not.toHaveProperty('deadline');
     expect(onIntervention.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         arguments: expect.objectContaining({
           allowEscape: false,
           deadline: expect.any(Number),
+          description: 'Configure connector',
           questions: expect.arrayContaining([
             expect.objectContaining({ id: 'name', required: true }),
             expect.objectContaining({ id: 'scope', required: false }),
