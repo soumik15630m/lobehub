@@ -321,7 +321,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     expect(mockDispatchAgentRun).toHaveBeenCalledWith(
       expect.objectContaining({
         agentType: 'amp',
-        args: ['--mode', 'high'],
+        args: ['--agent-arg=--mode', '--agent-arg=high'],
         deviceId: 'device-1',
       }),
     );
