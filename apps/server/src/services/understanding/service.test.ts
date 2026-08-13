@@ -98,6 +98,8 @@ const storedContext = (
   sourceCount: 3,
 });
 
+const providerAttempts = (...attempts: Array<{ id: string; revision: number }>) => attempts;
+
 const createHarness = (initialSession?: OnboardingUnderstandingSession) => {
   let session = initialSession;
   let latestAssistant:
@@ -211,7 +213,7 @@ const createHarness = (initialSession?: OnboardingUnderstandingSession) => {
       };
       return { revision };
     }),
-    reconcileProviders: vi.fn(async () => ({ attempts: [], session: session! })),
+    reconcileProviders: vi.fn(async () => ({ attempts: providerAttempts(), session: session! })),
     prepareWriting: vi.fn(async ({ sourceFingerprint, threadId }) => {
       const feedbackRevision = session?.feedback?.revision ?? 0;
       const generationRevision = (session?.generationRevision ?? 0) + 1;
@@ -522,7 +524,7 @@ describe('UnderstandingService', () => {
     const harness = createHarness(createSession({ gmail }));
     harness.repository.reconcileProviders.mockImplementationOnce(async () => {
       harness.setSession(next);
-      return { attempts: [{ id: 'github', revision: 1 }], session: next };
+      return { attempts: providerAttempts({ id: 'github', revision: 1 }), session: next };
     });
 
     await expect(
@@ -540,6 +542,37 @@ describe('UnderstandingService', () => {
       expect.objectContaining({ providers: [{ id: 'github', revision: 1 }] }),
       expect.any(Object),
     );
+  });
+
+  /** @example Failed reconciliation compensation is logged before the trigger error is rethrown. */
+  it('reports failed provider compensation when workflow dispatch fails', async () => {
+    const next = createSession({ github: providerState('running', 1) });
+    const harness = createHarness(createSession({}));
+    const triggerError = new Error('workflow dispatch failed');
+    const compensationError = new Error('database unavailable');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    harness.repository.reconcileProviders.mockImplementationOnce(async () => {
+      harness.setSession(next);
+      return { attempts: providerAttempts({ id: 'github', revision: 1 }), session: next };
+    });
+    harness.repository.failProvider.mockRejectedValueOnce(compensationError);
+    mockTriggerProviders.mockRejectedValueOnce(triggerError);
+
+    await expect(
+      harness.service.reconcileProviders({
+        providerIds: ['github'],
+        responseLanguage: 'zh-CN',
+        sessionId: 'session-1',
+        topicId: 'topic-1',
+      }),
+    ).rejects.toBe(triggerError);
+
+    expect(consoleError).toHaveBeenCalledWith('[understanding:reconcileCompensation]', {
+      errorName: 'Error',
+      providerId: 'github',
+      revision: 1,
+    });
+    consoleError.mockRestore();
   });
 
   /**

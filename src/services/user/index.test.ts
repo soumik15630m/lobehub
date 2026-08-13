@@ -11,6 +11,7 @@ const mockLambdaClient = vi.hoisted(() => ({
     getUserRegistrationDuration: { query: vi.fn() },
     getUserState: { query: vi.fn() },
     getUserSSOProviders: { query: vi.fn() },
+    reconcileOnboardingUnderstandingProviders: { mutate: vi.fn() },
     retryOnboardingUnderstandingSource: { mutate: vi.fn() },
     reviseOnboardingUnderstanding: { mutate: vi.fn() },
     startOnboardingUnderstanding: { mutate: vi.fn() },
@@ -50,6 +51,9 @@ describe('UserService', () => {
     const pollingResult = { id: 'session-1', sources: {}, status: 'pending' };
     mockLambdaClient.user.startOnboardingUnderstanding.mutate.mockResolvedValueOnce(pollingResult);
     mockLambdaClient.user.getOnboardingUnderstanding.query.mockResolvedValueOnce(pollingResult);
+    mockLambdaClient.user.reconcileOnboardingUnderstandingProviders.mutate.mockResolvedValueOnce(
+      pollingResult,
+    );
     mockLambdaClient.user.reviseOnboardingUnderstanding.mutate.mockResolvedValueOnce(pollingResult);
     mockLambdaClient.user.retryOnboardingUnderstandingSource.mutate.mockResolvedValueOnce(
       pollingResult,
@@ -64,6 +68,12 @@ describe('UserService', () => {
       topicId: 'topic-1',
     });
     await userService.getOnboardingUnderstanding('topic-1');
+    await userService.reconcileOnboardingUnderstandingProviders({
+      providerIds: ['github'],
+      responseLanguage: 'en-US',
+      sessionId: 'session-1',
+      topicId: 'topic-1',
+    });
     await userService.reviseOnboardingUnderstanding({
       expectedFeedbackRevision: 0,
       feedback: 'Focus on infrastructure.',
@@ -90,6 +100,14 @@ describe('UserService', () => {
       topicId: 'topic-1',
     });
     expect(mockLambdaClient.user.getOnboardingUnderstanding.query).toHaveBeenCalledWith({
+      topicId: 'topic-1',
+    });
+    expect(
+      mockLambdaClient.user.reconcileOnboardingUnderstandingProviders.mutate,
+    ).toHaveBeenCalledWith({
+      providerIds: ['github'],
+      responseLanguage: 'en-US',
+      sessionId: 'session-1',
       topicId: 'topic-1',
     });
     expect(mockLambdaClient.user.reviseOnboardingUnderstanding.mutate).toHaveBeenCalledWith({

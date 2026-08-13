@@ -399,7 +399,7 @@ export class UnderstandingService {
         },
       );
     } catch (triggerError) {
-      await Promise.allSettled(
+      const compensationResults = await Promise.allSettled(
         attempts.map(({ id, revision }) =>
           this.failProvider({
             providerId: id,
@@ -409,6 +409,14 @@ export class UnderstandingService {
           }),
         ),
       );
+      compensationResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') return;
+        console.error('[understanding:reconcileCompensation]', {
+          errorName: result.reason instanceof Error ? result.reason.name : 'UnknownError',
+          providerId: attempts[index].id,
+          revision: attempts[index].revision,
+        });
+      });
       throw triggerError;
     }
 

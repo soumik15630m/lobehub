@@ -129,6 +129,11 @@ describe('requiredApiKeyScopeForTrpc', () => {
     expect(requiredApiKeyScopeForTrpc('user.startOnboardingUnderstanding', 'mutation')).toEqual({
       scopes: ['user:write', 'model:invoke'],
     });
+    expect(
+      requiredApiKeyScopeForTrpc('user.reconcileOnboardingUnderstandingProviders', 'mutation'),
+    ).toEqual({
+      scopes: ['user:write', 'model:invoke'],
+    });
     // sibling procedures in the namespace are untouched
     expect(requiredApiKeyScopeForTrpc('agentDocument.createDocument', 'mutation')).toEqual({
       scopes: ['knowledge:write'],
