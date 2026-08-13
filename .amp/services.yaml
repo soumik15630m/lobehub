@@ -1,9 +1,12 @@
-# Amp injects PORT as the Portal listener. LobeHub's Vite server reads
-# SPA_PORT, while PORT remains its backend proxy target; assigning both avoids
-# proxying API requests back into the SPA server itself.
+# This Portal intentionally runs only the frontend `pnpm dev:spa` workflow; it
+# does not start LobeHub's local backend or its database dependencies. API
+# requests still target port 3010 and require a separately started backend.
+# Amp injects PORT as the Portal listener, but LobeHub's Vite server reads
+# SPA_PORT, so preserve port 3010 as the proxy target to avoid proxying API
+# requests back into the SPA server itself.
 services:
   web-spa:
-    command: 'SPA_PORT="$PORT" PORT=3010 bun run dev:spa'
+    command: 'SPA_PORT="$PORT" PORT=3010 pnpm dev:spa'
     portal:
       description: LobeHub Web SPA development server
       title: LobeHub Web SPA
