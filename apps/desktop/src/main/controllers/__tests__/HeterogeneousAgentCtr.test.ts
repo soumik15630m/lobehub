@@ -1332,10 +1332,9 @@ describe('HeterogeneousAgentCtr', () => {
       expect(send).toHaveBeenCalledWith('heteroAgentSessionComplete', { sessionId });
     });
 
-    it('routes Codex app-server user input through the existing intervention UI', async () => {
-      const deadline = Date.now() + 60_000;
+    it('routes unbounded Codex app-server user input without inventing a deadline', async () => {
       const interventionArguments = {
-        deadline,
+        allowEscape: false,
         questions: [
           {
             header: 'Scope',
@@ -1347,7 +1346,7 @@ describe('HeterogeneousAgentCtr', () => {
       };
       codexAppServerInterventionMock.mockReturnValue({
         arguments: interventionArguments,
-        timeoutMs: 60_000,
+        timeoutMs: null,
         toolCallId: 'codex-question-1',
       });
       const send = vi.fn();
@@ -1390,6 +1389,13 @@ describe('HeterogeneousAgentCtr', () => {
           }),
         ),
       );
+      const interventionEvent = send.mock.calls.find(
+        ([channel, payload]) =>
+          channel === 'heteroAgentEvent' &&
+          payload.event?.type === 'agent_intervention_request' &&
+          payload.event.data?.toolCallId === 'codex-question-1',
+      )?.[1].event;
+      expect(interventionEvent?.data).not.toHaveProperty('deadline');
       await ctr.submitIntervention({
         operationId: 'op-codex-intervention',
         result: { scope: 'All' },

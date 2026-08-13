@@ -99,9 +99,10 @@ export interface CodexAppServerInterventionRequest {
   arguments: {
     allowEscape?: boolean;
     deadline?: number;
+    description?: string;
     questions: CodexAppServerInterventionQuestion[];
   };
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   toolCallId: string;
 }
 
@@ -426,11 +427,6 @@ const toExecUsage = (usage: CodexTokenUsageBreakdown | undefined) =>
         reasoning_output_tokens: usage.reasoningOutputTokens,
       }
     : undefined;
-
-const toStringArray = (value: unknown): string[] => {
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
-  return typeof value === 'string' && value ? [value] : [];
-};
 
 const readInterventionResult = (result: unknown): Record<string, unknown> =>
   isRecord(result) ? result : {};
@@ -1170,13 +1166,20 @@ export class CodexAppServerSession {
       typeof message.params?.itemId === 'string'
         ? message.params.itemId
         : `request-user-input-${String(message.id)}`;
-    const timeoutMs =
+    const autoResolutionMs =
       typeof message.params?.autoResolutionMs === 'number' && message.params.autoResolutionMs > 0
         ? message.params.autoResolutionMs
-        : DEFAULT_ASK_USER_TIMEOUT_MS;
-    const deadline = Date.now() + timeoutMs;
+        : undefined;
+    const timeoutMs =
+      autoResolutionMs ??
+      (message.params?.isBlocking === true ? null : DEFAULT_ASK_USER_TIMEOUT_MS);
+    const deadline = timeoutMs === null ? undefined : Date.now() + timeoutMs;
     const outcome = await this.requestIntervention(message.id, {
-      arguments: { deadline, questions: questionEntries.map(({ question }) => question) },
+      arguments: {
+        allowEscape: false,
+        ...(deadline === undefined ? {} : { deadline }),
+        questions: questionEntries.map(({ question }) => question),
+      },
       timeoutMs,
       toolCallId: itemId,
     });
@@ -1188,13 +1191,8 @@ export class CodexAppServerSession {
     }
 
     const result = readInterventionResult(outcome.answer.result);
-    const freeform = toStringArray(result.__freeform__);
     const answers = Object.fromEntries(
-      questionEntries.flatMap(({ id }, index) => {
-        const values = getQuestionAnswer(result, id);
-        const resolved = values.length > 0 ? values : index === 0 ? freeform : [];
-        return resolved.length > 0 ? [[id, { answers: resolved }]] : [];
-      }),
+      questionEntries.map(({ id }) => [id, { answers: getQuestionAnswer(result, id) }]),
     );
     this.writeRpc({ id: message.id, result: { answers } });
   }
@@ -1264,10 +1262,13 @@ export class CodexAppServerSession {
     const itemId = `mcp-elicitation-${String(message.id)}`;
     const timeoutMs = DEFAULT_ASK_USER_TIMEOUT_MS;
     const deadline = Date.now() + timeoutMs;
+    const description =
+      typeof message.params?.message === 'string' ? message.params.message : undefined;
     const outcome = await this.requestIntervention(message.id, {
       arguments: {
         allowEscape: false,
         deadline,
+        ...(description === undefined ? {} : { description }),
         questions: fields.map(({ question }) => question),
       },
       timeoutMs,
@@ -1298,7 +1299,7 @@ export class CodexAppServerSession {
       }
 
       const coerced = coerceSchemaAnswer(answer, fieldSchema, schemaOptions);
-      if (!coerced.success) {
+      if ('error' in coerced) {
         const errorMessage = `Invalid MCP elicitation value for '${name}': ${coerced.error}`;
         this.writeUnsupportedRequest(message.id, errorMessage);
         await this.reportDiagnostic(`invalid-mcp-elicitation-answer:${name}`, errorMessage);
@@ -1337,9 +1338,10 @@ export class CodexAppServerSession {
       type: 'item.started',
     });
 
-    const timeoutMs = request.arguments.deadline
-      ? Math.max(1, request.arguments.deadline - Date.now())
-      : request.timeoutMs;
+    const timeoutMs =
+      request.arguments.deadline === undefined
+        ? request.timeoutMs
+        : Math.max(1, request.arguments.deadline - Date.now());
     const interventionRequest = { ...request, timeoutMs };
     const answer = this.options.onIntervention
       ? await this.options.onIntervention(interventionRequest, controller.signal)

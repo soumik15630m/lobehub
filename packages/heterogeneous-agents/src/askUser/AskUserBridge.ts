@@ -53,15 +53,15 @@ export interface PendingOptions {
    *
    * `elapsedMs` is the wall-clock millis since `pending()` was called.
    */
-  onProgress?: (elapsedMs: number, totalMs: number) => void | Promise<void>;
+  onProgress?: (elapsedMs: number, totalMs: number | null) => void | Promise<void>;
   /** How often to call `onProgress`. Default: 30 000 (30s). */
   progressIntervalMs?: number;
   /**
-   * Absolute deadline (`Date.now() + timeoutMs`). When it elapses, the
-   * pending promise resolves with `{ cancelled: true, cancelReason: 'timeout' }`.
-   * Default: 5 minutes.
+   * Relative timeout used to create an absolute deadline. When it elapses,
+   * the pending promise resolves with `{ cancelled: true, cancelReason: 'timeout' }`.
+   * Pass `null` for an unbounded wait. Default: 10 minutes.
    */
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }
 
 interface PendingEntry {
@@ -144,23 +144,27 @@ export class AskUserBridge {
         new Error(`AskUserBridge: duplicate toolCallId in flight: ${toolCallId}`),
       );
     }
-    const timeoutMs = options.timeoutMs ?? DEFAULT_ASK_USER_TIMEOUT_MS;
+    const timeoutMs =
+      options.timeoutMs === undefined ? DEFAULT_ASK_USER_TIMEOUT_MS : options.timeoutMs;
     const progressIntervalMs = options.progressIntervalMs ?? 30_000;
     const startedAt = Date.now();
-    const deadline = startedAt + timeoutMs;
+    const deadline = timeoutMs === null ? undefined : startedAt + timeoutMs;
 
     return new Promise<InterventionAnswer>((resolve, reject) => {
-      const timeoutTimer = setTimeout(() => {
-        this.pending_.delete(toolCallId);
-        clearInterval(progressTimer);
-        // Mirror the terminal state onto the outbound stream so the consumer
-        // can flip the UI's intervention to `rejected` before the owning op
-        // finishes and gets garbage-collected. Without this, the renderer
-        // would still show the form as pending after the bridge has already
-        // given up.
-        this.emitResponse(toolCallId, { cancelReason: 'timeout', cancelled: true });
-        resolve({ cancelled: true, cancelReason: 'timeout' });
-      }, timeoutMs);
+      const timeoutTimer =
+        timeoutMs === null
+          ? undefined
+          : setTimeout(() => {
+              this.pending_.delete(toolCallId);
+              clearInterval(progressTimer);
+              // Mirror the terminal state onto the outbound stream so the consumer
+              // can flip the UI's intervention to `rejected` before the owning op
+              // finishes and gets garbage-collected. Without this, the renderer
+              // would still show the form as pending after the bridge has already
+              // given up.
+              this.emitResponse(toolCallId, { cancelReason: 'timeout', cancelled: true });
+              resolve({ cancelled: true, cancelReason: 'timeout' });
+            }, timeoutMs);
 
       const progressTimer: ReturnType<typeof setInterval> | undefined = options.onProgress
         ? setInterval(() => {
@@ -171,7 +175,7 @@ export class AskUserBridge {
         : undefined;
 
       const cleanup = () => {
-        clearTimeout(timeoutTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         if (progressTimer) clearInterval(progressTimer);
       };
 
@@ -182,7 +186,7 @@ export class AskUserBridge {
       const data: AgentInterventionRequestData = {
         apiName: args.apiName ?? 'askUserQuestion',
         arguments: JSON.stringify(args.arguments ?? {}),
-        deadline,
+        ...(deadline === undefined ? {} : { deadline }),
         identifier: args.identifier ?? 'claude-code',
         toolCallId,
       };

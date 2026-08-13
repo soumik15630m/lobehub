@@ -157,6 +157,26 @@ describe('AskUserBridge', () => {
       drain.stop();
     });
 
+    it('waits without a deadline when timeoutMs is explicitly null', async () => {
+      const bridge = new AskUserBridge('op-1');
+      const drain = drainEvents(bridge);
+      const pending = bridge.pending(
+        { arguments: {}, toolCallId: 'unbounded' },
+        { timeoutMs: null },
+      );
+      const event = await drain.firstEvent;
+
+      expect(event.data).not.toHaveProperty('deadline');
+      expect(vi.getTimerCount()).toBe(0);
+
+      vi.advanceTimersByTime(10 * 60 * 1000 + 1);
+      expect(bridge.pendingCount).toBe(1);
+
+      bridge.resolve('unbounded', { result: 'answered' });
+      await expect(pending).resolves.toEqual({ result: 'answered' });
+      drain.stop();
+    });
+
     it('cancelAll() rejects future pending() calls', async () => {
       const bridge = new AskUserBridge('op-1');
       bridge.cancelAll();

@@ -83,6 +83,16 @@ const isQuestionItem = (
   question: AskUserQuestionItem | undefined,
 ): question is AskUserQuestionItem => !!question;
 
+/** Preserve only an explicit form-level description; never stringify malformed payloads. */
+export const normalizeAskUserDescription = (
+  args: Partial<AskUserQuestionArgs> | unknown,
+): string | undefined => {
+  const parsedArgs = parseJsonString(args);
+  const rawArgs = toRecord(parsedArgs);
+
+  return typeof rawArgs?.description === 'string' ? rawArgs.description : undefined;
+};
+
 /**
  * Tool arguments come from model/runtime payloads, so tolerate stale or weakly
  * shaped messages instead of letting one bad card crash the conversation page.

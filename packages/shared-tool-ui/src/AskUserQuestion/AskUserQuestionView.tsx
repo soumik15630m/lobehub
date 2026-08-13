@@ -67,7 +67,9 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
     activeQuestion,
     activeTab,
     custom,
+    description,
     escapeActive,
+    escapeAvailable,
     escapeText,
     expired,
     handleCustomChange,
@@ -280,6 +282,7 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
 
   return (
     <Flexbox gap={12} ref={rootRef}>
+      {description && <Text type="secondary">{description}</Text>}
       {isMulti && (
         <Tabs
           activeKey={escapeActive ? 'escape' : activeTab}
@@ -297,18 +300,22 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
                 ),
               };
             }),
-            // The whole-form freeform sits as a visible peer to the questions —
-            // it replaces *all* of them, so it reads as a sibling choice, not a
-            // hidden mode toggle.
-            {
-              key: 'escape',
-              label: (
-                <Flexbox horizontal align="center" gap={6}>
-                  <Icon icon={PenLine} size={12} />
-                  <Text>{labels.escapeEnter}</Text>
-                </Flexbox>
-              ),
-            },
+            ...(escapeAvailable
+              ? [
+                  // The whole-form freeform sits as a visible peer to the questions —
+                  // it replaces *all* of them, so it reads as a sibling choice, not a
+                  // hidden mode toggle.
+                  {
+                    key: 'escape',
+                    label: (
+                      <Flexbox horizontal align="center" gap={6}>
+                        <Icon icon={PenLine} size={12} />
+                        <Text>{labels.escapeEnter}</Text>
+                      </Flexbox>
+                    ),
+                  },
+                ]
+              : []),
           ]}
           onChange={(key: string) => {
             if (key === 'escape') {

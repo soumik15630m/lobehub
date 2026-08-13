@@ -464,7 +464,8 @@ export class LobeBuiltinMcpServer {
         // tick from the start so even 4-minute pendings get periodic life.
         const onProgress =
           progressToken !== undefined && extra?.sendNotification
-            ? async (elapsedMs: number, totalMs: number) => {
+            ? async (elapsedMs: number, totalMs: number | null) => {
+                if (totalMs === null) return;
                 try {
                   await extra.sendNotification!({
                     method: 'notifications/progress',

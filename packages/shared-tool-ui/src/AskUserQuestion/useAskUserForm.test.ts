@@ -101,6 +101,26 @@ describe('useAskUserForm select-to-submit', () => {
     });
   });
 
+  it('keeps multi-question navigation when whole-form escape is disabled', () => {
+    const args = {
+      ...twoQuestionArgs,
+      allowEscape: false,
+      description: 'Configure connector',
+    };
+    const { hook } = setup(args);
+
+    expect(hook.result.current.description).toBe('Configure connector');
+    expect(hook.result.current.isMulti).toBe(true);
+    expect(hook.result.current.escapeAvailable).toBe(false);
+    expect(hook.result.current.activeQuestion?.header).toBe('Scope');
+
+    act(() => {
+      hook.result.current.setActiveTab('1');
+    });
+
+    expect(hook.result.current.activeQuestion?.header).toBe('Mode');
+  });
+
   it('keys duplicate question text by stable IDs', () => {
     const args: AskUserQuestionArgs = {
       questions: [

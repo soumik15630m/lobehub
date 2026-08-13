@@ -8,7 +8,7 @@ import {
   isQuestionAnswered,
   readDraft,
 } from './draft';
-import { normalizeAskUserQuestions } from './normalize';
+import { normalizeAskUserDescription, normalizeAskUserQuestions } from './normalize';
 import type { AskUserDraft, AskUserQuestionArgs, AskUserQuestionItem } from './types';
 
 export interface UseAskUserFormParams {
@@ -29,7 +29,9 @@ export interface AskUserFormApi {
   activeQuestion?: AskUserQuestionItem;
   activeTab: string;
   custom: Record<string, string>;
+  description?: string;
   escapeActive: boolean;
+  escapeAvailable: boolean;
   escapeText: string;
   expired: boolean;
   handleCustomChange: (q: AskUserQuestionItem, value: string) => void;
@@ -75,6 +77,7 @@ export const useAskUserForm = ({
   writeDraft,
 }: UseAskUserFormParams): AskUserFormApi => {
   const questions = useMemo(() => normalizeAskUserQuestions(args), [args]);
+  const description = useMemo(() => normalizeAskUserDescription(args), [args]);
   const suppliedDeadline = args?.deadline;
 
   // Plain const (not a hook) so it can read `persistedDraft` without tripping
@@ -299,7 +302,9 @@ export const useAskUserForm = ({
     activeQuestion,
     activeTab,
     custom,
+    description,
     escapeActive: inEscape,
+    escapeAvailable,
     escapeText,
     expired,
     handleCustomChange,
@@ -307,7 +312,7 @@ export const useAskUserForm = ({
     handleSkip,
     handleSubmit,
     handleToggle,
-    isMulti: escapeAvailable,
+    isMulti: questions.length > 1,
     isSubmitDisabled,
     picks,
     questions,
