@@ -357,6 +357,7 @@ export const TRPC_PROCEDURE_EXTRA_SCOPES: Record<string, ApiKeyScope[]> = {
   'user.resetSettings': ['model:write'],
   // onboarding understanding triggers enqueue generation workflows
   // (persona / task-recommendation `generateObject` steps run async via QStash)
+  'user.reconcileOnboardingUnderstandingProviders': ['model:invoke'],
   'user.retryOnboardingUnderstandingSource': ['model:invoke'],
   'user.reviseOnboardingUnderstanding': ['model:invoke'],
   'user.startOnboardingUnderstanding': ['model:invoke'],

@@ -77,6 +77,29 @@ export class UserService {
     return lambdaClient.user.readOnboardingDocument.query({ type });
   };
 
+  /**
+   * Reconciles live connector selections with an active onboarding Understanding session.
+   *
+   * Use when:
+   * - A user returns from connector setup after adding a source
+   * - Retryable provider failures should resume without retrying permanent permission failures
+   *
+   * Expects:
+   * - Provider IDs reflect the caller's current connector selection
+   * - The session belongs to the active onboarding topic
+   *
+   * Returns:
+   * - The latest Understanding polling state after reconciliation is dispatched
+   */
+  reconcileOnboardingUnderstandingProviders = async (input: {
+    providerIds: string[];
+    responseLanguage: string;
+    sessionId: string;
+    topicId: string;
+  }): Promise<OnboardingUnderstandingPollingResult> => {
+    return lambdaClient.user.reconcileOnboardingUnderstandingProviders.mutate(input);
+  };
+
   updateOnboardingDocument = async (type: 'soul' | 'persona', content: string) => {
     return lambdaClient.user.updateOnboardingDocument.mutate({ content, type });
   };
