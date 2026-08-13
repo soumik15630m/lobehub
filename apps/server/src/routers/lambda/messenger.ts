@@ -974,8 +974,9 @@ export const messengerRouter = router({
     // Telegram is deliberately absent here even though the account link makes it
     // reachable. This list doubles as send-target discovery for the client tool
     // adapter, which resolves a per-agent `botId` from `platform` and ignores
-    // `messengerInstallationId` (see LOBE-12706). Surfacing the synthetic
-    // singleton would turn a clean "I can't reach Telegram" into a confusing
+    // `messengerInstallationId` (it cannot route a send through a System Bot
+    // installation). Surfacing the synthetic singleton would turn a clean
+    // "I can't reach Telegram" into a confusing
     // `No enabled bot found for platform "telegram"` for anyone who linked the
     // System Bot but has no per-agent Telegram provider. Reaching the user
     // themselves does not need this list at all — that is `sendMessengerPush`,
