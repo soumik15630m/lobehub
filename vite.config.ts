@@ -23,6 +23,7 @@ import { createViteWatchOptions } from './plugins/vite/watchOptions';
 
 const isMobile = process.env.MOBILE === 'true';
 const isAuth = process.env.AUTH === 'true';
+const isAuthSsg = process.env.AUTH_SSG === 'true';
 const isWorkbench = process.env.SPA_TARGET === 'workbench';
 const mode = process.env.NODE_ENV === 'production' ? 'production' : 'development';
 
@@ -148,6 +149,11 @@ export default defineConfig({
     dedupe: sharedRendererDedupe,
     tsconfigPaths: true,
   },
+  ssr: isAuthSsg
+    ? {
+        noExternal: [/^@lobehub\//, /^@pierre\//],
+      }
+    : undefined,
   optimizeDeps: sharedOptimizeDeps,
   plugins: [
     isMobileRuntime &&

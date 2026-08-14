@@ -6,6 +6,7 @@ import { type Locales, normalizeLocale } from '@/locales/resources';
 import { getServerAuthConfig } from '@/server/globalConfig/getServerAuthConfig';
 import { type AuthSPAServerConfig } from '@/types/spaServerConfig';
 
+import { selectAuthSpaTemplate } from '../../selectAuthSpaTemplate';
 import { buildSeoMeta } from './seoMeta';
 
 export function generateStaticParams() {
@@ -16,12 +17,12 @@ export function generateStaticParams() {
 
 const isDev = process.env.NODE_ENV === 'development';
 
-async function getTemplate(): Promise<string> {
+async function getTemplate(locale: Locales, pathname: string): Promise<string> {
   if (isDev) return fetchViteDevTemplate('/index.auth.html');
 
-  const { authHtmlTemplate } = await import('../../authHtmlTemplate');
+  const { authHtmlTemplate, authSsgHtmlTemplates } = await import('../../authHtmlTemplate');
 
-  return authHtmlTemplate;
+  return selectAuthSpaTemplate(authSsgHtmlTemplates, authHtmlTemplate, locale, pathname);
 }
 
 export async function GET(
@@ -39,8 +40,8 @@ export async function GET(
     globalCDN: appEnv.CDN_USE_GLOBAL,
   };
 
-  const template = await getTemplate();
   const pathname = `/${(path ?? []).join('/')}`;
+  const template = await getTemplate(locale, pathname);
   const seoMeta = await buildSeoMeta(locale, pathname);
 
   return renderSpaHtml(template, { seoMeta, serverConfig: authConfig });
