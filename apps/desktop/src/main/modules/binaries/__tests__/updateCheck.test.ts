@@ -7,13 +7,15 @@ import {
   CLI_UPDATE_SOURCES,
 } from '../updateCheck';
 
-// Mock global fetch before importing the module under test.
-const fetchMock = vi.fn();
-vi.stubGlobal('fetch', fetchMock);
+// Mock logger and net-fetch to avoid pulling in electron dependencies.
+// vi.hoisted ensures the mock function is available when vi.mock factories run.
+const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
 
-// Mock logger to avoid pulling in electron dependencies.
 vi.mock('@/utils/logger', () => ({
   createLogger: () => ({ debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }),
+}));
+vi.mock('@/utils/net-fetch', () => ({
+  netFetch: fetchMock,
 }));
 
 describe('CLI_UPDATE_SOURCES', () => {
