@@ -2,6 +2,7 @@ import type { BinaryUpdateInfo, CheckBinaryUpdateParams } from '@lobechat/electr
 import semver from 'semver';
 
 import { createLogger } from '@/utils/logger';
+import { netFetch } from '@/utils/net-fetch';
 
 const logger = createLogger('modules:binaries:updateCheck');
 
@@ -58,7 +59,7 @@ async function fetchLatestVersion(npmPackage: string): Promise<string | undefine
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await netFetch(url, { signal: controller.signal });
     if (!response.ok) return undefined;
     const data = (await response.json()) as { version?: string };
     return data.version;
