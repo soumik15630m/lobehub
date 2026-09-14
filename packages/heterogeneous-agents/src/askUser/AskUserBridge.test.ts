@@ -117,6 +117,38 @@ describe('AskUserBridge', () => {
       drain.stop();
     });
 
+    it('converges a deferred answer to session_ended when provider delivery is lost', async () => {
+      const bridge = new AskUserBridge('op-1');
+      const drain = drainEvents(bridge);
+      const pending = bridge.pending(
+        { arguments: {}, toolCallId: 'permission-1' },
+        { deferProducerAck: true },
+      );
+      await drain.firstEvent;
+
+      bridge.resolve('permission-1', {
+        resolutionRequestId: '018fbd8e-7baf-7c6d-8000-000000000004',
+        result: 'accept',
+      });
+      await expect(pending).resolves.toEqual({ result: 'accept' });
+      bridge.cancelAll('session_ended');
+
+      await expect(drain.events.next()).resolves.toMatchObject({
+        value: {
+          data: {
+            cancelReason: 'session_ended',
+            cancelled: true,
+            producerAck: true,
+            resolutionRequestId: '018fbd8e-7baf-7c6d-8000-000000000004',
+            result: undefined,
+          },
+          type: 'agent_intervention_response',
+        },
+      });
+      expect(bridge.acknowledge('permission-1')).toBe(false);
+      drain.stop();
+    });
+
     it('rejects pending() when the same toolCallId is already in flight', async () => {
       const bridge = new AskUserBridge('op-1');
       const drain = drainEvents(bridge);
