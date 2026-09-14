@@ -273,6 +273,39 @@ describe('aiProvider action helpers', () => {
       });
       expect(fallbackSpy).toHaveBeenCalledWith('cogview-4', 'parameters', 'zhipu');
     });
+
+    it('restores required prompt for a partial image model schema', async () => {
+      vi.mocked(runtimeModule.getModelPropertyWithFallback).mockImplementation(async (_id, key) => {
+        if (key === 'parameters')
+          return {
+            aspectRatio: { default: 'auto', enum: ['auto', '1:1'] },
+            prompt: { default: '' },
+          } satisfies ModelParamsSchema;
+        return undefined;
+      });
+
+      const model = createImageModel({
+        parameters: {
+          resolution: { default: '1K', enum: ['1K', '2K'] },
+        } as ModelParamsSchema,
+      });
+
+      const result = await normalizeImageModel(model);
+
+      expect(result.parameters).toEqual({
+        aspectRatio: { default: 'auto', enum: ['auto', '1:1'] },
+        prompt: { default: '' },
+        resolution: { default: '1K', enum: ['1K', '2K'] },
+      });
+    });
+
+    it('provides prompt when a custom image model has no known schema', async () => {
+      const model = createImageModel({ parameters: undefined, providerId: 'newapi' });
+
+      const result = await normalizeImageModel(model);
+
+      expect(result.parameters).toEqual({ prompt: { default: '' } });
+    });
   });
 
   describe('normalizeEmbeddingModel', () => {
