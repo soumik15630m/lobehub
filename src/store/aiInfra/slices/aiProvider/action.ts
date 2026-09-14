@@ -100,20 +100,22 @@ const getModelProperty = async <T>(
 const hasParameters = (parameters?: ModelParamsSchema): parameters is ModelParamsSchema =>
   !!parameters && Object.keys(parameters).length > 0;
 
-const resolveModelParameters = async (
-  model: EnabledAiModel,
-): Promise<ModelParamsSchema | undefined> => {
-  // The `parameters` DB column defaults to `{}`, and enabling a model never
-  // populates it. An empty object is truthy, so a naive truthy check would skip
-  // the fallback and leave required fields (e.g. `prompt`) missing, which later
-  // fails schema validation. Treat an empty object as "no inline parameters".
-  if (hasParameters(model.parameters)) return model.parameters;
+const resolveModelParameters = async (model: EnabledAiModel): Promise<ModelParamsSchema> => {
+  if (hasParameters(model.parameters) && model.parameters.prompt) return model.parameters;
 
-  return getModelPropertyWithFallback<ModelParamsSchema | undefined>(
+  const fallbackParameters = await getModelPropertyWithFallback<ModelParamsSchema | undefined>(
     model.id,
     'parameters',
     model.providerId,
   );
+
+  // User model records can contain empty or partial parameter schemas. Keep their
+  // overrides while restoring the prompt required by generation config validation.
+  return {
+    ...fallbackParameters,
+    ...model.parameters,
+    prompt: model.parameters?.prompt ?? fallbackParameters?.prompt ?? { default: '' },
+  };
 };
 
 const dedupeById = (models: ProviderModelListItem[]) => uniqBy(models, 'id');
