@@ -7,6 +7,11 @@ import { isQueueAgentRuntimeEnabled } from '@/server/services/queue/impls';
 
 import { execAgentMember, execAgentThreadRun, type SubAgentRunDeps } from '../subAgentRuns';
 
+// Keep one network recorder for both legacy fetch and the SSRF-safe HTTP transport.
+vi.mock('@lobechat/ssrf-safe-fetch', () => ({
+  ssrfSafeFetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+}));
+
 vi.mock('@/libs/qstash', () => ({ OtelQstashClient: vi.fn() }));
 vi.mock('@/server/services/queue/impls', () => ({ isQueueAgentRuntimeEnabled: vi.fn() }));
 
@@ -56,7 +61,10 @@ describe('sub-agent call notifications', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(true);
-    vi.stubGlobal('fetch', fetchMock.mockResolvedValue(new Response('{}')));
+    vi.stubGlobal(
+      'fetch',
+      fetchMock.mockImplementation(async () => new Response('{}')),
+    );
     loadState.mockResolvedValue({ agentId: 'parent-agent', host: { hooks: serializedHooks } });
     createThread.mockResolvedValue({ id: 'thread', type: ThreadType.Isolation });
     updateThread.mockResolvedValue({});
