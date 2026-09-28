@@ -156,10 +156,10 @@ const observeStateWrites = (coordinator: ReturnType<typeof setup>['coordinator']
   );
   return writes;
 };
-const execute = (service: AgentRuntimeService) =>
+const execute = (service: AgentRuntimeService, runOperationId = operationId) =>
   service.executeStep({
     context: { phase: 'user_input' } as any,
-    operationId,
+    operationId: runOperationId,
     stepIndex: 1,
   });
 const httpEvents = () => safeFetch.mock.calls.map(([, request]) => JSON.parse(request.body));
@@ -380,6 +380,147 @@ describe('lifecycle notifications from executeStep', () => {
     ]);
     expect(httpEvents()[2]).toMatchObject({ operationId, ...origin, errorDetail: error });
   });
+
+  it.each([true, false])(
+    'isolates two operations on one service when the second initial read succeeds=%s',
+    async (secondReadSucceeds) => {
+      vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(true);
+      const firstState = makeState();
+      const { service, coordinator, step } = setup(firstState);
+      const firstError = { type: 'ProviderFailure', message: 'first operation failed' };
+      coordinator.loadAgentState
+        .mockReset()
+        .mockResolvedValueOnce(firstState)
+        .mockRejectedValue(new Error('first reload unavailable'));
+      step.mockRejectedValue(firstError);
+      await expect(execute(service)).rejects.toBe(firstError);
+      expect(httpEvents().map((event) => event.hookType)).toEqual([
+        'beforeStep',
+        'onComplete',
+        'onError',
+      ]);
+      expect(httpEvents()[2]).toMatchObject({ operationId, ...origin, errorDetail: firstError });
+
+      const secondOperationId = 'second-operation';
+      const secondOrigin = {
+        ...origin,
+        agentId: 'agent-2',
+        topicId: 'topic-2',
+        threadId: 'thread-2',
+        workspaceId: 'workspace-2',
+        lineage: { parentOperationId: 'parent-2' },
+      };
+      const secondState = {
+        ...makeState(),
+        operationId: secondOperationId,
+        origin: secondOrigin,
+        host: {
+          hooks: events.map((type) => ({
+            id: 'second-' + type,
+            type,
+            webhook: { url: 'https://example.com/second-hooks' },
+          })),
+        },
+      };
+      const secondError = { type: 'ProviderFailure', message: 'second operation failed' };
+      coordinator.loadAgentState.mockReset();
+      if (secondReadSucceeds) coordinator.loadAgentState.mockResolvedValueOnce(secondState);
+      coordinator.loadAgentState.mockRejectedValue(secondError);
+      step.mockRejectedValue(secondError);
+      safeFetch.mockClear();
+      coordinator.saveAgentState.mockClear();
+      const dispatchSpy = vi.spyOn(hookDispatcher, 'dispatch');
+      await expect(execute(service, secondOperationId)).rejects.toBe(secondError);
+      const secondErrorEvent = dispatchSpy.mock.calls.find(
+        ([id, type]) => id === secondOperationId && type === 'onError',
+      )?.[2] as AgentHookEvent;
+      expect(secondErrorEvent.operationId).toBe(secondOperationId);
+      expect(secondErrorEvent.errorDetail).toMatchObject(secondError);
+      expect(coordinator.saveAgentState).toHaveBeenCalledTimes(1);
+      const [, savedState] = coordinator.saveAgentState.mock.calls[0];
+      expect(savedState.error).toMatchObject(secondError);
+      if (secondReadSucceeds) {
+        expect(httpEvents().map((event) => event.hookType)).toEqual([
+          'beforeStep',
+          'onComplete',
+          'onError',
+        ]);
+        for (const [url, request] of safeFetch.mock.calls) {
+          expect(url).toBe('https://example.com/second-hooks');
+          expect(JSON.parse(request.body)).toMatchObject({
+            operationId: secondOperationId,
+            ...secondOrigin,
+            parentOperationId: 'parent-2',
+          });
+        }
+        expect(savedState.origin).toEqual(secondOrigin);
+        expect(savedState.host.hooks).toEqual(secondState.host.hooks);
+      } else {
+        // The second invocation never obtained state: it must not reuse any
+        // hook endpoint, origin, lineage, or state from the first invocation.
+        expect(safeFetch).not.toHaveBeenCalled();
+        expect(savedState.origin).toBeUndefined();
+        expect(savedState.host).toBeUndefined();
+        expect(secondErrorEvent.agentId).toBe('');
+        expect(secondErrorEvent.lineage).toBeUndefined();
+        expect(secondErrorEvent.parentOperationId).toBeUndefined();
+        expect(secondErrorEvent.topicId).toBeUndefined();
+        expect(secondErrorEvent.threadId).toBeUndefined();
+        expect(secondErrorEvent.workspaceId).toBeUndefined();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'preserves error precedence when reloaded-state notifications fail (critical=%s)',
+    async (critical) => {
+      vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(true);
+      const state = makeState();
+      state.host.hooks = (['onComplete', 'onError'] as const).map((type) => ({
+        id: type,
+        type,
+        webhook: { url: 'https://example.com/hooks', ...(critical && { fallback: 'none' }) },
+      }));
+      const { service, coordinator, step } = setup(state);
+      const businessError = {
+        type: 'ProviderFailure',
+        message: 'original business failure',
+        body: { code: 'upstream' },
+      };
+      coordinator.loadAgentState
+        .mockReset()
+        .mockResolvedValueOnce(state)
+        .mockRejectedValue(new Error('reload unavailable'));
+      step.mockRejectedValue(businessError);
+      safeFetch.mockRejectedValue(new Error('notification delivery failed'));
+      const lifecycle = (service as any).completionLifecycle;
+      const lifecycleSpy = vi.spyOn(lifecycle, 'dispatchHooks');
+      const thrown = await execute(service).catch((error) => error);
+      if (critical) {
+        const lifecycleError = await lifecycleSpy.mock.results[0].value.catch(
+          (error: unknown) => error,
+        );
+        expect(thrown).toBeInstanceOf(CriticalHookDeliveryError);
+        expect(thrown).toBe(lifecycleError);
+        expect(thrown).not.toBe(businessError);
+      } else {
+        expect(thrown).toBe(businessError);
+      }
+      expect(lifecycleSpy).toHaveBeenCalledTimes(1);
+      expect(coordinator.saveAgentState).toHaveBeenCalledTimes(1);
+      expect(coordinator.saveAgentState.mock.calls[0][1]).toMatchObject({
+        status: 'error',
+        error: businessError,
+        origin,
+        host: state.host,
+      });
+      expect(httpEvents().map((event) => event.hookType)).toEqual(
+        critical ? ['onComplete'] : ['onComplete', 'onError'],
+      );
+      for (const event of httpEvents())
+        expect(event).toMatchObject({ operationId, errorDetail: businessError, ...origin });
+    },
+  );
 
   it.each(['done', 'max_steps', 'cost_limit', 'interrupted', 'waiting_for_async_tool'])(
     'preserves the existing completion relationship for %s',
