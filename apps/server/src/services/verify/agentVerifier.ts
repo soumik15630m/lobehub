@@ -6,7 +6,7 @@ import debug from 'debug';
 import { AgentModel } from '@/database/models/agent';
 import { DocumentModel } from '@/database/models/document';
 import type { LobeChatDatabase } from '@/database/type';
-import type { AgentHook, AgentHookEvent } from '@/server/services/agentRuntime/hooks/types';
+import type { AgentHookEvent, AgentHookFactory } from '@/server/services/agentRuntime/hooks/types';
 import { AiAgentService } from '@/server/services/aiAgent';
 
 import type { VerifierAgentRunner } from './executor';
@@ -124,29 +124,34 @@ export const createVerifierAgentRunner = (params: {
       userId,
       ...(workspaceId ? { workspaceId } : {}),
     };
-    const hooks: AgentHook[] = [
+    const createHooks: AgentHookFactory = (execution) => [
       {
-        handler: async (event: AgentHookEvent) => {
-          await settleVerifierCheckFromTerminal(
-            db,
-            userId,
-            {
-              checkItemId: checkItem.id,
-              errorMessage: event.errorMessage,
-              parentOperationId: operationId,
-              reason: event.reason,
-              verifierOperationId: event.operationId,
-            },
-            workspaceId,
-          );
-        },
         id: 'verify-agent-terminal',
         type: 'onComplete' as const,
-        webhook: {
-          body: terminalHookBody,
-          delivery: 'qstash' as const,
-          url: '/api/workflows/verify/on-verifier-complete',
-        },
+        ...(execution === 'crossWorker'
+          ? {
+              webhook: {
+                body: terminalHookBody,
+                delivery: 'qstash' as const,
+                url: '/api/workflows/verify/on-verifier-complete',
+              },
+            }
+          : {
+              handler: async (event: AgentHookEvent) => {
+                await settleVerifierCheckFromTerminal(
+                  db,
+                  userId,
+                  {
+                    checkItemId: checkItem.id,
+                    errorMessage: event.errorMessage,
+                    parentOperationId: operationId,
+                    reason: event.reason,
+                    verifierOperationId: event.operationId,
+                  },
+                  workspaceId,
+                );
+              },
+            }),
       },
     ];
     const verifierPrompt = buildVerifierPrompt({
@@ -170,7 +175,7 @@ export const createVerifierAgentRunner = (params: {
       appContext: { taskId },
       autoStart: true,
       ...(evidenceFileIds.length ? { fileIds: evidenceFileIds } : {}),
-      hooks,
+      createHooks,
       // Only the builtin fallback receives lifecycle's verify-safe model/provider;
       // a pinned agent keeps its own runtime config.
       ...(useProvidedModelConfig && model ? { model } : {}),

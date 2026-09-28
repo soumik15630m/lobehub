@@ -106,7 +106,9 @@ describe('sub-agent call notifications', () => {
         subOperationId: 'child-operation',
         success: true,
       });
-      const childHookIds = startAgent.mock.calls[0][0].hooks.map((h: { id: string }) => h.id);
+      const childHookIds = startAgent.mock.calls[0][0]
+        .createHooks('crossWorker')
+        .map((h: { id: string }) => h.id);
       expect(types.filter((type) => childHookIds.includes(type))).toEqual([]);
       expect(loadState).toHaveBeenCalledTimes(1);
     },
@@ -169,6 +171,7 @@ describe('sub-agent call notifications', () => {
   });
 
   it('keeps local handlers single-dispatch and emits after at startup return', async () => {
+    loadState.mockResolvedValue({ host: { hooks: [] } });
     vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(false);
     const events: string[] = [];
     hookDispatcher.register(
@@ -231,13 +234,7 @@ describe('sub-agent call notifications', () => {
 
   it('does not fall back to stale memory hooks when persisted hooks are empty', async () => {
     loadState.mockResolvedValue({ host: { hooks: [] } });
-    hookDispatcher.register(
-      'parent-operation',
-      serializedHooks.map((hook) => ({
-        ...hook,
-        handler: vi.fn(),
-      })),
-    );
+    hookDispatcher.register('parent-operation', serializedHooks);
     await invoke('isolated');
     expect(fetchMock).not.toHaveBeenCalled();
   });

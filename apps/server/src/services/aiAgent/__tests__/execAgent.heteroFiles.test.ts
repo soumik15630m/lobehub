@@ -1348,7 +1348,6 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
   // targets.
   describe('terminal hook seeding onto runningOperation (regression guard)', () => {
     const taskHook = {
-      handler: async () => {},
       id: 'task-on-complete',
       type: 'onComplete' as const,
       webhook: {
@@ -1469,13 +1468,56 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
       expect(mockExecuteToolCall).not.toHaveBeenCalled();
     });
 
+    it('rejects an unavailable critical callback before dispatch instead of losing the completed reply', async () => {
+      vi.stubEnv('QSTASH_TOKEN', '');
+      try {
+        await expect(
+          service.execAgent({
+            agentId: 'agent-1',
+            createHooks: () => [
+              {
+                id: 'completion',
+                type: 'onComplete',
+                webhook: {
+                  delivery: 'qstash',
+                  fallback: 'none',
+                  url: '/api/agent/webhooks/bot-callback',
+                },
+              },
+            ],
+            prompt: 'do the task',
+          }),
+        ).rejects.toThrow('QSTASH_TOKEN is required');
+        expect(mockSpawnHeteroSandbox).not.toHaveBeenCalled();
+        expect(mockDispatchAgentRun).not.toHaveBeenCalled();
+        expect(recordStartSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('rejects function hooks before handing work to a heterogeneous agent', async () => {
+      await expect(
+        service.execAgent({
+          agentId: 'agent-1',
+          hooks: [{ id: 'callback', type: 'onComplete', handler: vi.fn() }],
+          prompt: 'do the task',
+        }),
+      ).rejects.toThrow(/handler functions cannot be transferred/);
+      expect(mockSpawnHeteroSandbox).not.toHaveBeenCalled();
+      expect(mockDispatchAgentRun).not.toHaveBeenCalled();
+      expect(recordStartSpy).not.toHaveBeenCalled();
+    });
+
     it('serializes the onComplete webhook hook onto runningOperation (sandbox dispatch)', async () => {
+      const createHooks = vi.fn(() => [taskHook]);
       await service.execAgent({
         agentId: 'agent-1',
-        hooks: [taskHook],
+        createHooks,
         prompt: 'do the task',
       } as any);
 
+      expect(createHooks).toHaveBeenCalledExactlyOnceWith('crossWorker');
       // Sanity: this run took the sandbox path (no bound device).
       expect(mockSpawnHeteroSandbox).toHaveBeenCalled();
 
@@ -1491,8 +1533,7 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
           }),
         }),
       ]);
-      // The non-serializable handler must be stripped (only webhook crosses the
-      // process boundary).
+      // The producer selected a webhook; no function may cross the process boundary.
       expect(seed.runningOperation.hooks[0]).not.toHaveProperty('handler');
       expect(recordStartSpy).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -311,24 +311,18 @@ describe('beforeToolCall control pipeline', () => {
       const fixture = setup([
         control(),
         {
-          id: 'dual',
+          id: 'callback',
           type: 'beforeToolCall',
           handler,
-          webhook: { url: 'https://hooks.example/dual' },
         },
         { id: 'http', type: 'beforeToolCall', webhook: { url: 'https://hooks.example/http' } },
       ]);
       await fixture.step();
-      expect(handler).toHaveBeenCalledTimes(queue ? 0 : 1);
-      expect(fetchHook.mock.calls.map(([url]) => url)).toEqual(
-        queue
-          ? [
-              'https://hooks.example/control',
-              'https://hooks.example/dual',
-              'https://hooks.example/http',
-            ]
-          : ['https://hooks.example/control', 'https://hooks.example/http'],
-      );
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(fetchHook.mock.calls.map(([url]) => url)).toEqual([
+        'https://hooks.example/control',
+        'https://hooks.example/http',
+      ]);
       expect(fixture.execute).toHaveBeenCalledTimes(1);
     },
   );

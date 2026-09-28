@@ -356,7 +356,7 @@ describe('TaskResultBridgeService.deliver', () => {
 
     await new TaskResultBridgeService(db, TEST_USER).deliver(baseParams);
 
-    const hooks = execAgent.mock.calls[0][0].hooks;
+    const hooks = execAgent.mock.calls[0][0].createHooks('crossWorker');
     expect(execAgent.mock.calls[0][0].userInterventionConfig).toEqual({ approvalMode: 'headless' });
     expect(getUserSettings).not.toHaveBeenCalled();
     const botHook = hooks.find((hook: any) => hook.id === 'task-creator-completion');

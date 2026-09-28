@@ -37,6 +37,7 @@ import {
 import { CompletionLifecycle } from '@/server/services/agentRuntime/CompletionLifecycle';
 import { hookDispatcher } from '@/server/services/agentRuntime/hooks';
 import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import { validateCrossWorkerHooks } from '@/server/services/agentRuntime/hooks/validateCrossWorkerHooks';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { resolveDeviceDispatchAuthorizationFailure } from '@/server/services/deviceGateway/dispatchAuthorization';
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
@@ -336,6 +337,8 @@ export const dispatchHeteroAgent = async (
     topicStartOwnerOperationId,
   } = input;
 
+  validateCrossWorkerHooks(hooks);
+
   const isRemoteHetero = isRemoteHeterogeneousType(heteroType);
   // Same structured shape as the built-in path (`op_{ts}_{agentId}_{topicId}_{rand}`)
   // so hetero ops aren't visually distinct bare nanoids in the trace/op tables.
@@ -587,12 +590,12 @@ export const dispatchHeteroAgent = async (
   // runtime uses — driving the task lifecycle (onTopicComplete) and IM bot
   // completion callbacks uniformly. The hetero block returns before
   // AgentRuntimeService (which registers hooks for normal runs), so we do it
-  // here. Local mode dispatches these in-memory handlers; queue mode delivers
-  // the serialized webhooks persisted on the operation row above.
+  // here. The terminal consumer delivers the explicit webhook targets
+  // persisted on the operation row above.
   // Seed topic.metadata.runningOperation so heteroIngest can validate the
   // operation, and so every terminal site (heteroFinish, agentNotify done,
   // dispatch failure) can re-fire the serialized hooks across a process
-  // boundary in queue mode.
+  // boundary.
   const childOperation = {
     assistantMessageId,
     heteroType,

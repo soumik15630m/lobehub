@@ -1090,7 +1090,6 @@ describe('HeterogeneousAgentService', () => {
 
     // The exact hook taskRunner attaches: a handler (local) PLUS a qstash webhook.
     const taskHook: AgentHook = {
-      handler: async () => {},
       id: 'task-on-complete',
       type: 'onComplete',
       webhook: {

@@ -549,7 +549,6 @@ export class AgentBridgeService {
     }
 
     const { client } = opts;
-    const queueMode = isQueueAgentRuntimeEnabled();
     let queueHandoffSucceeded = false;
 
     // Mark the thread as active and run the rest inside a try/finally so the
@@ -587,7 +586,7 @@ export class AgentBridgeService {
       try {
         // executeWithCallback handles progress message (post + edit at each step)
         // The final reply is edited into the progress message by onComplete
-        const { topicId } = await this.executeWithCallback(thread, message, {
+        const { topicId, handoff } = await this.executeWithCallback(thread, message, {
           agentId,
           botContext,
           channelContext,
@@ -598,7 +597,7 @@ export class AgentBridgeService {
           replyLocale,
           trigger: RequestTrigger.Bot,
         });
-        queueHandoffSucceeded = queueMode;
+        queueHandoffSucceeded = handoff === true;
 
         // Persist topic mapping and channel context in thread state for follow-up messages
         // Skip if the platform opted out of auto-subscribe (no subscribe = no follow-up)
@@ -619,7 +618,7 @@ export class AgentBridgeService {
       AgentBridgeService.activeThreads.delete(thread.id);
       // In queue mode, the callback owns cleanup only after webhook handoff succeeds.
       // If setup fails before that point, clean up locally to avoid leaked reactions.
-      if (!queueMode || !queueHandoffSucceeded) {
+      if (!queueHandoffSucceeded) {
         await this.clearReaction(thread, client);
       }
     }
@@ -723,7 +722,7 @@ export class AgentBridgeService {
       const runningOperation = existingTopic.metadata?.runningOperation;
       if (
         runningOperation &&
-        isQueueAgentRuntimeEnabled() &&
+        (isQueueAgentRuntimeEnabled() || runningOperation.heteroType) &&
         (await topicModel.isRunningOperationAlive(this.db, runningOperation))
       ) {
         const deferred = await this.deferWhileTopicBusy(thread, message, botContext, topicId);
@@ -740,7 +739,6 @@ export class AgentBridgeService {
     // Read cached channel context from thread state
     const channelContext = threadState?.channelContext;
 
-    const queueMode = isQueueAgentRuntimeEnabled();
     let queueHandoffSucceeded = false;
 
     // Mark the thread as active and run the rest inside a try/finally so the
@@ -769,7 +767,7 @@ export class AgentBridgeService {
 
       try {
         // executeWithCallback handles progress message (post + edit at each step)
-        await this.executeWithCallback(thread, message, {
+        const { handoff } = await this.executeWithCallback(thread, message, {
           agentId,
           botContext,
           channelContext,
@@ -781,7 +779,7 @@ export class AgentBridgeService {
           topicId,
           trigger: RequestTrigger.Bot,
         });
-        queueHandoffSucceeded = queueMode;
+        queueHandoffSucceeded = handoff === true;
       } catch (error) {
         // If the cached topicId references a deleted topic (FK violation),
         // clear thread state and retry as a fresh mention instead of surfacing the DB error.
@@ -807,7 +805,7 @@ export class AgentBridgeService {
         // atomic: a run that started between them still makes the
         // reservation give up with "remained busy". Same remedy — park the
         // message for replay instead of telling the user the agent failed.
-        if (queueMode && isTopicBusyError(errMsg)) {
+        if (isTopicBusyError(errMsg)) {
           const deferred = await this.deferWhileTopicBusy(thread, message, botContext, topicId);
           if (deferred) return;
         }
@@ -825,7 +823,7 @@ export class AgentBridgeService {
     } finally {
       AgentBridgeService.activeThreads.delete(thread.id);
       // In queue mode, the callback owns cleanup only after webhook handoff succeeds.
-      if (!queueMode || !queueHandoffSucceeded) {
+      if (!queueHandoffSucceeded) {
         await this.clearReaction(thread, opts.client);
       }
     }
@@ -852,7 +850,7 @@ export class AgentBridgeService {
       topicId?: string;
       trigger?: string;
     },
-  ): Promise<{ reply: string; topicId: string }> {
+  ): Promise<{ handoff?: boolean; reply: string; topicId: string }> {
     // Resolve bot platform context from platform registry
     const platformDef = opts.botContext?.platform
       ? platformRegistry.getPlatform(opts.botContext.platform)
@@ -1163,7 +1161,7 @@ export class AgentBridgeService {
       trigger?: string;
       webhookBody: Record<string, unknown>;
     },
-  ): Promise<{ reply: string; topicId: string }> {
+  ): Promise<{ handoff?: boolean; reply: string; topicId: string }> {
     const {
       agentId,
       botContext,
@@ -1202,9 +1200,6 @@ export class AgentBridgeService {
           files,
           hooks: [
             {
-              handler: async () => {
-                /* local handler not used in queue mode */
-              },
               id: 'bot-step-progress',
               type: 'afterStep',
               webhook: {
@@ -1214,9 +1209,6 @@ export class AgentBridgeService {
               },
             },
             {
-              handler: async () => {
-                /* local handler not used in queue mode */
-              },
               id: 'bot-completion',
               type: 'onComplete',
               webhook: botContext
@@ -1312,7 +1304,7 @@ export class AgentBridgeService {
       }
     }
 
-    return { reply: '', topicId: result.topicId };
+    return { handoff: true, reply: '', topicId: result.topicId };
   }
 
   /**
@@ -1343,7 +1335,7 @@ export class AgentBridgeService {
       userMessage?: Message;
       webhookBody: Record<string, unknown>;
     },
-  ): Promise<{ reply: string; topicId: string }> {
+  ): Promise<{ handoff?: boolean; reply: string; topicId: string }> {
     const {
       agentId,
       botContext,
@@ -1366,6 +1358,7 @@ export class AgentBridgeService {
       webhookBody,
     } = opts;
 
+    let callbackHandoff = false;
     let { progressMessage } = opts;
     let operationStartTime = 0;
     // Tracks the last markdown body written to `progressMessage` so we can
@@ -1383,7 +1376,7 @@ export class AgentBridgeService {
       }
     };
 
-    return new Promise<{ reply: string; topicId: string }>((resolve, reject) => {
+    return new Promise<{ handoff?: boolean; reply: string; topicId: string }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         stopGatewayTyping();
         reject(new Error(`Agent execution timed out`));
@@ -1409,259 +1402,294 @@ export class AgentBridgeService {
               }
             : undefined,
           files,
-          hooks: [
-            {
-              handler: async (event) => {
-                if (
-                  event.shouldContinue &&
-                  userMessage &&
-                  shouldApplyReaction(reactionMode, 'step')
-                ) {
-                  const desiredEmoji = getStepReactionEmoji(event.stepType, event.toolsCalling);
-                  await this.setReaction(thread, userMessage, client, desiredEmoji, botContext);
-                }
-
-                if (!event.shouldContinue || !progressMessage || displayToolCalls !== true) return;
-
-                const msgBody = renderStepProgress(
+          createHooks: (execution) => {
+            callbackHandoff = execution === 'crossWorker';
+            return callbackHandoff
+              ? [
                   {
-                    content: event.content,
-                    elapsedMs: event.elapsedMs ?? getElapsedMs(),
-                    executionTimeMs: event.executionTimeMs ?? 0,
-                    lastContent: event.lastLLMContent,
-                    lastToolsCalling: event.lastToolsCalling,
-                    reasoning: event.reasoning,
-                    stepType: (event.stepType as 'call_llm' | 'call_tool') ?? 'call_llm',
-                    thinking: event.thinking ?? false,
-                    toolsCalling: event.toolsCalling,
-                    toolsResult: event.toolsResult,
-                    totalCost: event.totalCost ?? 0,
-                    totalInputTokens: event.totalInputTokens ?? 0,
-                    totalOutputTokens: event.totalOutputTokens ?? 0,
-                    totalSteps: event.totalSteps ?? 0,
-                    totalTokens: event.totalTokens ?? 0,
-                    totalToolCalls: event.totalToolCalls ?? 0,
+                    id: 'bot-step-progress',
+                    type: 'afterStep',
+                    webhook: {
+                      body: { ...webhookBody, type: 'step' },
+                      delivery: 'qstash',
+                      url: callbackUrl,
+                    },
                   },
-                  replyLocale,
-                );
+                  {
+                    id: 'bot-completion',
+                    type: 'onComplete',
+                    webhook: botContext
+                      ? createBotCompletionWebhook({
+                          body: { ...webhookBody, userPrompt: prompt },
+                          botContext,
+                          userId: this.userId,
+                          workspaceId: this.workspaceId,
+                        })
+                      : {
+                          body: { ...webhookBody, type: 'completion', userPrompt: prompt },
+                          delivery: 'qstash',
+                          fallback: 'none',
+                          url: callbackUrl,
+                        },
+                  },
+                ]
+              : [
+                  {
+                    id: 'bot-step-progress',
+                    type: 'afterStep' as const,
+                    handler: async (event) => {
+                      if (
+                        event.shouldContinue &&
+                        userMessage &&
+                        shouldApplyReaction(reactionMode, 'step')
+                      ) {
+                        const desiredEmoji = getStepReactionEmoji(
+                          event.stepType,
+                          event.toolsCalling,
+                        );
+                        await this.setReaction(
+                          thread,
+                          userMessage,
+                          client,
+                          desiredEmoji,
+                          botContext,
+                        );
+                      }
 
-                const stats = {
-                  elapsedMs: event.elapsedMs ?? getElapsedMs(),
-                  totalCost: event.totalCost ?? 0,
-                  totalTokens: event.totalTokens ?? 0,
-                };
-                // Local mode goes through the Chat SDK adapter, which only
-                // applies the platform's markdown parse_mode when the message
-                // is `{ markdown }`. Pre-converting via `formatMarkdown` (HTML
-                // for Telegram, mrkdwn for Slack, …) would land in a plain
-                // string branch and render literal `**` / `<b>`. `formatReply`
-                // only appends a plain stats line, so it composes cleanly with
-                // the markdown body.
-                const progressBody = client?.formatReply?.(msgBody, stats) ?? msgBody;
+                      if (!event.shouldContinue || !progressMessage || displayToolCalls !== true)
+                        return;
 
-                if (progressBody === lastProgressText) return;
+                      const msgBody = renderStepProgress(
+                        {
+                          content: event.content,
+                          elapsedMs: event.elapsedMs ?? getElapsedMs(),
+                          executionTimeMs: event.executionTimeMs ?? 0,
+                          lastContent: event.lastLLMContent,
+                          lastToolsCalling: event.lastToolsCalling,
+                          reasoning: event.reasoning,
+                          stepType: (event.stepType as 'call_llm' | 'call_tool') ?? 'call_llm',
+                          thinking: event.thinking ?? false,
+                          toolsCalling: event.toolsCalling,
+                          toolsResult: event.toolsResult,
+                          totalCost: event.totalCost ?? 0,
+                          totalInputTokens: event.totalInputTokens ?? 0,
+                          totalOutputTokens: event.totalOutputTokens ?? 0,
+                          totalSteps: event.totalSteps ?? 0,
+                          totalTokens: event.totalTokens ?? 0,
+                          totalToolCalls: event.totalToolCalls ?? 0,
+                        },
+                        replyLocale,
+                      );
 
-                try {
-                  progressMessage = await progressMessage.edit({ markdown: progressBody });
-                  lastProgressText = progressBody;
-                } catch (error) {
-                  log('executeWithCallback[local]: failed to edit progress message: %O', error);
-                }
-              },
-              id: 'bot-step-progress',
-              type: 'afterStep' as const,
-              webhook: {
-                body: { ...webhookBody, type: 'step' },
-                delivery: 'qstash' as const,
-                url: callbackUrl,
-              },
-            },
-            {
-              handler: async (event) => {
-                clearTimeout(timeout);
-                stopGatewayTyping();
-
-                const reason = event.reason;
-                log('onComplete: reason=%s', reason);
-
-                if (reason === 'error') {
-                  const errorMsg = event.errorMessage || 'Agent execution failed';
-                  log(
-                    'onComplete: agent run failed, operationId=%s, errorType=%s, errorMessage=%s',
-                    event.operationId,
-                    event.errorType,
-                    errorMsg,
-                  );
-                  try {
-                    const errorBody = renderAgentError(
-                      event.errorType,
-                      errorMsg,
-                      event.operationId,
-                      replyLocale,
-                      event.errorAttribution,
-                      event.errorBudget,
-                      event.errorHeterogeneous,
-                    );
-                    // Wrap in `{ markdown }` so the Chat SDK adapter sets the
-                    // platform's markdown parse_mode (e.g. Telegram `Markdown`,
-                    // Slack `mrkdwn`) and converts the body. Plain strings are
-                    // sent without parse_mode and would render literal `**`.
-                    if (progressMessage) {
-                      await progressMessage.edit({ markdown: errorBody });
-                    } else {
-                      await thread.post({ markdown: errorBody });
-                    }
-                  } catch {
-                    // ignore send failure
-                  }
-                  // Resolve (not reject) — the friendly error has already been
-                  // posted to the user. Rejecting would bubble up to the outer
-                  // try/catch in handleMention and cause a duplicate generic
-                  // "Agent Execution Failed" message on top of the friendly one.
-                  resolve({ reply: '', topicId: resolvedTopicId });
-                  return;
-                }
-
-                if (reason === 'interrupted') {
-                  if (progressMessage) {
-                    try {
-                      await progressMessage.edit({
-                        markdown: renderStopped(undefined, replyLocale),
-                      });
-                    } catch {
-                      // ignore edit failure
-                    }
-                  }
-                  resolve({ reply: '', topicId: resolvedTopicId });
-                  return;
-                }
-
-                try {
-                  const lastAssistantContent = event.lastAssistantContent;
-                  // Convert hook-event attachments (JSON-safe) to chat-sdk
-                  // Attachment shape. Only the *last* chunk carries
-                  // attachments so a multi-chunk reply doesn't repeat the
-                  // image/file once per chunk.
-                  const lastChunkAttachments = hookEventAttachmentsToChatSdk(
-                    event.attachments as any,
-                  );
-                  const hasText = !!lastAssistantContent;
-                  const hasAttachments = !!lastChunkAttachments?.length;
-
-                  if (hasText || hasAttachments) {
-                    let chunks: string[];
-                    if (hasText) {
-                      const replyBody = renderFinalReply(lastAssistantContent!);
-                      const replyStats = {
-                        elapsedMs: event.duration ?? getElapsedMs(),
-                        llmCalls: event.llmCalls ?? 0,
-                        toolCalls: event.toolCalls ?? 0,
-                        totalCost: event.cost ?? 0,
+                      const stats = {
+                        elapsedMs: event.elapsedMs ?? getElapsedMs(),
+                        totalCost: event.totalCost ?? 0,
                         totalTokens: event.totalTokens ?? 0,
                       };
-                      // See progress-handler note above: keep the body as
-                      // markdown and let the Chat SDK adapter render it with the
-                      // platform's parse_mode. `formatReply` only appends a
-                      // plain-text stats line.
-                      const finalText = client?.formatReply?.(replyBody, replyStats) ?? replyBody;
-                      chunks = splitMessage(finalText, charLimit);
-                      if (chunks.length === 0) chunks = [''];
-                    } else {
-                      // Attachment-only reply — drive one empty chunk so the
-                      // attachments still get posted via buildPostable.
-                      chunks = [''];
-                    }
+                      // Local mode goes through the Chat SDK adapter, which only
+                      // applies the platform's markdown parse_mode when the message
+                      // is `{ markdown }`. Pre-converting via `formatMarkdown` (HTML
+                      // for Telegram, mrkdwn for Slack, …) would land in a plain
+                      // string branch and render literal `**` / `<b>`. `formatReply`
+                      // only appends a plain stats line, so it composes cleanly with
+                      // the markdown body.
+                      const progressBody = client?.formatReply?.(msgBody, stats) ?? msgBody;
 
-                    const lastIdx = chunks.length - 1;
-                    const buildPostable = (chunk: string, idx: number) =>
-                      idx === lastIdx && hasAttachments
-                        ? { attachments: lastChunkAttachments!, markdown: chunk }
-                        : { markdown: chunk };
+                      if (progressBody === lastProgressText) return;
 
-                    try {
-                      if (progressMessage) {
-                        if (chunks[0] !== lastProgressText) {
-                          await progressMessage.edit(buildPostable(chunks[0], 0));
-                          lastProgressText = chunks[0];
-                        }
-                        for (let i = 1; i < chunks.length; i++) {
-                          await thread.post(buildPostable(chunks[i], i));
-                        }
-                      } else {
-                        for (let i = 0; i < chunks.length; i++) {
-                          await thread.post(buildPostable(chunks[i], i));
-                        }
+                      try {
+                        progressMessage = await progressMessage.edit({ markdown: progressBody });
+                        lastProgressText = progressBody;
+                      } catch (error) {
+                        log(
+                          'executeWithCallback[local]: failed to edit progress message: %O',
+                          error,
+                        );
                       }
-                    } catch (error) {
-                      log('executeWithCallback[local]: failed to send final message: %O', error);
-                    }
-
-                    log(
-                      'executeWithCallback[local]: got response (%d chars, %d chunks, %d attachments)',
-                      lastAssistantContent?.length ?? 0,
-                      chunks.length,
-                      lastChunkAttachments?.length ?? 0,
-                    );
-                    resolve({ reply: lastAssistantContent ?? '', topicId: resolvedTopicId });
-
-                    // Fire-and-forget: summarize topic title in DB. Only when
-                    // we have text to summarize on — image-only replies skip
-                    // title generation (the prompt itself still drives it on
-                    // the next round).
-                    if (resolvedTopicId && prompt && lastAssistantContent) {
-                      const topicModel = new TopicModel(this.db, this.userId, this.workspaceId);
-                      topicModel
-                        .findById(resolvedTopicId)
-                        .then(async (topic) => {
-                          if (topic?.title) return;
-
-                          const systemAgent = new SystemAgentService(
-                            this.db,
-                            this.userId,
-                            this.workspaceId,
-                          );
-                          const title = await systemAgent.generateTopicTitle({
-                            lastAssistantContent,
-                            topicId: resolvedTopicId,
-                            userPrompt: prompt,
-                          });
-                          if (!title) return;
-
-                          await topicModel.update(resolvedTopicId, { title });
-                        })
-                        .catch((error) => {
-                          log(
-                            'executeWithCallback[local]: topic title summarization failed: %O',
-                            error,
-                          );
-                        });
-                    }
-
-                    return;
-                  }
-
-                  reject(new Error('Agent completed but no response content found'));
-                } catch (error) {
-                  reject(error);
-                }
-              },
-              id: 'bot-completion',
-              type: 'onComplete' as const,
-              webhook: botContext
-                ? createBotCompletionWebhook({
-                    body: { ...webhookBody, userPrompt: prompt },
-                    botContext,
-                    userId: this.userId,
-                    workspaceId: this.workspaceId,
-                  })
-                : {
-                    body: { ...webhookBody, type: 'completion', userPrompt: prompt },
-                    delivery: 'qstash' as const,
-                    fallback: 'none' as const,
-                    url: callbackUrl,
+                    },
                   },
-            },
-          ],
+                  {
+                    id: 'bot-completion',
+                    type: 'onComplete' as const,
+                    handler: async (event) => {
+                      clearTimeout(timeout);
+                      stopGatewayTyping();
+
+                      const reason = event.reason;
+                      log('onComplete: reason=%s', reason);
+
+                      if (reason === 'error') {
+                        const errorMsg = event.errorMessage || 'Agent execution failed';
+                        log(
+                          'onComplete: agent run failed, operationId=%s, errorType=%s, errorMessage=%s',
+                          event.operationId,
+                          event.errorType,
+                          errorMsg,
+                        );
+                        try {
+                          const errorBody = renderAgentError(
+                            event.errorType,
+                            errorMsg,
+                            event.operationId,
+                            replyLocale,
+                            event.errorAttribution,
+                            event.errorBudget,
+                            event.errorHeterogeneous,
+                          );
+                          // Wrap in `{ markdown }` so the Chat SDK adapter sets the
+                          // platform's markdown parse_mode (e.g. Telegram `Markdown`,
+                          // Slack `mrkdwn`) and converts the body. Plain strings are
+                          // sent without parse_mode and would render literal `**`.
+                          if (progressMessage) {
+                            await progressMessage.edit({ markdown: errorBody });
+                          } else {
+                            await thread.post({ markdown: errorBody });
+                          }
+                        } catch {
+                          // ignore send failure
+                        }
+                        // Resolve (not reject) — the friendly error has already been
+                        // posted to the user. Rejecting would bubble up to the outer
+                        // try/catch in handleMention and cause a duplicate generic
+                        // "Agent Execution Failed" message on top of the friendly one.
+                        resolve({ reply: '', topicId: resolvedTopicId });
+                        return;
+                      }
+
+                      if (reason === 'interrupted') {
+                        if (progressMessage) {
+                          try {
+                            await progressMessage.edit({
+                              markdown: renderStopped(undefined, replyLocale),
+                            });
+                          } catch {
+                            // ignore edit failure
+                          }
+                        }
+                        resolve({ reply: '', topicId: resolvedTopicId });
+                        return;
+                      }
+
+                      try {
+                        const lastAssistantContent = event.lastAssistantContent;
+                        // Convert hook-event attachments (JSON-safe) to chat-sdk
+                        // Attachment shape. Only the *last* chunk carries
+                        // attachments so a multi-chunk reply doesn't repeat the
+                        // image/file once per chunk.
+                        const lastChunkAttachments = hookEventAttachmentsToChatSdk(
+                          event.attachments as any,
+                        );
+                        const hasText = !!lastAssistantContent;
+                        const hasAttachments = !!lastChunkAttachments?.length;
+
+                        if (hasText || hasAttachments) {
+                          let chunks: string[];
+                          if (hasText) {
+                            const replyBody = renderFinalReply(lastAssistantContent!);
+                            const replyStats = {
+                              elapsedMs: event.duration ?? getElapsedMs(),
+                              llmCalls: event.llmCalls ?? 0,
+                              toolCalls: event.toolCalls ?? 0,
+                              totalCost: event.cost ?? 0,
+                              totalTokens: event.totalTokens ?? 0,
+                            };
+                            // See progress-handler note above: keep the body as
+                            // markdown and let the Chat SDK adapter render it with the
+                            // platform's parse_mode. `formatReply` only appends a
+                            // plain-text stats line.
+                            const finalText =
+                              client?.formatReply?.(replyBody, replyStats) ?? replyBody;
+                            chunks = splitMessage(finalText, charLimit);
+                            if (chunks.length === 0) chunks = [''];
+                          } else {
+                            // Attachment-only reply — drive one empty chunk so the
+                            // attachments still get posted via buildPostable.
+                            chunks = [''];
+                          }
+
+                          const lastIdx = chunks.length - 1;
+                          const buildPostable = (chunk: string, idx: number) =>
+                            idx === lastIdx && hasAttachments
+                              ? { attachments: lastChunkAttachments!, markdown: chunk }
+                              : { markdown: chunk };
+
+                          try {
+                            if (progressMessage) {
+                              if (chunks[0] !== lastProgressText) {
+                                await progressMessage.edit(buildPostable(chunks[0], 0));
+                                lastProgressText = chunks[0];
+                              }
+                              for (let i = 1; i < chunks.length; i++) {
+                                await thread.post(buildPostable(chunks[i], i));
+                              }
+                            } else {
+                              for (let i = 0; i < chunks.length; i++) {
+                                await thread.post(buildPostable(chunks[i], i));
+                              }
+                            }
+                          } catch (error) {
+                            log(
+                              'executeWithCallback[local]: failed to send final message: %O',
+                              error,
+                            );
+                          }
+
+                          log(
+                            'executeWithCallback[local]: got response (%d chars, %d chunks, %d attachments)',
+                            lastAssistantContent?.length ?? 0,
+                            chunks.length,
+                            lastChunkAttachments?.length ?? 0,
+                          );
+                          resolve({ reply: lastAssistantContent ?? '', topicId: resolvedTopicId });
+
+                          // Fire-and-forget: summarize topic title in DB. Only when
+                          // we have text to summarize on — image-only replies skip
+                          // title generation (the prompt itself still drives it on
+                          // the next round).
+                          if (resolvedTopicId && prompt && lastAssistantContent) {
+                            const topicModel = new TopicModel(
+                              this.db,
+                              this.userId,
+                              this.workspaceId,
+                            );
+                            topicModel
+                              .findById(resolvedTopicId)
+                              .then(async (topic) => {
+                                if (topic?.title) return;
+
+                                const systemAgent = new SystemAgentService(
+                                  this.db,
+                                  this.userId,
+                                  this.workspaceId,
+                                );
+                                const title = await systemAgent.generateTopicTitle({
+                                  lastAssistantContent,
+                                  topicId: resolvedTopicId,
+                                  userPrompt: prompt,
+                                });
+                                if (!title) return;
+
+                                await topicModel.update(resolvedTopicId, { title });
+                              })
+                              .catch((error) => {
+                                log(
+                                  'executeWithCallback[local]: topic title summarization failed: %O',
+                                  error,
+                                );
+                              });
+                          }
+
+                          return;
+                        }
+
+                        reject(new Error('Agent completed but no response content found'));
+                      } catch (error) {
+                        reject(error);
+                      }
+                    },
+                  },
+                ];
+          },
           prompt,
           signal,
           title: '',
@@ -1719,6 +1747,11 @@ export class AgentBridgeService {
             }
           }
 
+          if (callbackHandoff) {
+            clearTimeout(timeout);
+            resolve({ handoff: true, reply: '', topicId: result.topicId });
+          }
+
           log(
             'executeWithCallback[local]: operationId=%s, topicId=%s',
             result.operationId,
@@ -1753,7 +1786,8 @@ export class AgentBridgeService {
           const errMsg = error instanceof Error ? error.message : String(error);
           if (
             (errMsg.includes('Failed query') && errMsg.includes('topic_id')) ||
-            errMsg.includes('Topic not found')
+            errMsg.includes('Topic not found') ||
+            isTopicBusyError(errMsg)
           ) {
             stopGatewayTyping();
             reject(error);

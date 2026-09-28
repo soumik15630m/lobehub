@@ -6,7 +6,7 @@ import debug from 'debug';
 import type { MessageModel } from '@/database/models/message';
 import type { ThreadModel } from '@/database/models/thread';
 import type { AgentRuntimeService } from '@/server/services/agentRuntime';
-import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import type { AgentHook, AgentHookFactory } from '@/server/services/agentRuntime/hooks/types';
 import type {
   GroupActionMemberMode,
   GroupActionOnComplete,
@@ -315,9 +315,9 @@ export function createThreadHooks(
    * placeholder tool message, then barrier-check + CAS-resume the parked
    * parent op.
    *
-   * Transport adapts to the runtime mode like every other lifecycle hook:
-   *   - local mode: the `handler` runs in-process with the child's finalState.
-   *   - queue mode: in-memory handlers don't survive cross-process steps, so
+   * This task producer selects its callback from the actual execution boundary:
+   *   - in-process execution: the `handler` runs in-process with the child's finalState.
+   *   - cross-worker execution: in-memory handlers don't survive cross-process steps, so
    *     the serialized `webhook` config is delivered via QStash to
    *     `/api/agent/webhooks/subagent-callback`, which re-enters the same
    *     bridge method. `delivery: 'qstash'` is required — a plain fetch would
@@ -330,43 +330,49 @@ export function createSubAgentBridgeHook(
   parentOperationId: string,
   toolMessageId: string,
   threadId: string,
+  execution: Parameters<AgentHookFactory>[0],
 ): AgentHook {
   return {
-    handler: async (event: AgentHookEvent) => {
-      try {
-        await agentRuntimeService.completeSubAgentBridge({
-          finalState: event.finalState,
-          operationId: event.operationId,
-          parentOperationId,
-          reason: event.reason ?? 'done',
-          threadId,
-          toolMessageId,
-        });
-      } catch (error) {
-        console.error(
-          'Sub-agent bridge: failed to complete bridge for parent %s: %O',
-          parentOperationId,
-          error,
-        );
-      }
-    },
     id: 'sub-agent-bridge',
     type: 'onComplete' as const,
-    webhook: {
-      body: { parentOperationId, threadId, toolMessageId },
-      delivery: 'qstash' as const,
-      // Keep the payload lean: the endpoint reloads the child's final state
-      // from the coordinator, so everything beyond these ids is dead weight.
-      // The default (all event fields) would ship the child's entire final
-      // answer (`lastAssistantContent`) — and any tool-produced attachments
-      // the shared lifecycle event extractor inlines — through QStash.
-      eventFields: ['operationId', 'reason', 'status'],
-      // The endpoint sits behind QStash signature auth, so the unsigned
-      // fetch fallback could never authenticate — it would only mask a
-      // publish failure as a silently-dropped 401, stranding the parent.
-      fallback: 'none' as const,
-      url: '/api/agent/webhooks/subagent-callback',
-    },
+    ...(execution === 'crossWorker'
+      ? {
+          webhook: {
+            body: { parentOperationId, threadId, toolMessageId },
+            delivery: 'qstash' as const,
+            // Keep the payload lean: the endpoint reloads the child's final state
+            // from the coordinator, so everything beyond these ids is dead weight.
+            // The default (all event fields) would ship the child's entire final
+            // answer (`lastAssistantContent`) — and any tool-produced attachments
+            // the shared lifecycle event extractor inlines — through QStash.
+            eventFields: ['operationId', 'reason', 'status'],
+            // The endpoint sits behind QStash signature auth, so the unsigned
+            // fetch fallback could never authenticate — it would only mask a
+            // publish failure as a silently-dropped 401, stranding the parent.
+            fallback: 'none' as const,
+            url: '/api/agent/webhooks/subagent-callback',
+          },
+        }
+      : {
+          handler: async (event: AgentHookEvent) => {
+            try {
+              await agentRuntimeService.completeSubAgentBridge({
+                finalState: event.finalState,
+                operationId: event.operationId,
+                parentOperationId,
+                reason: event.reason ?? 'done',
+                threadId,
+                toolMessageId,
+              });
+            } catch (error) {
+              console.error(
+                'Sub-agent bridge: failed to complete bridge for parent %s: %O',
+                parentOperationId,
+                error,
+              );
+            }
+          },
+        }),
   };
 }
 
@@ -392,6 +398,7 @@ export function createGroupActionMemberBridgeHook(
     parentOperationId: string;
     threadId?: string;
   },
+  execution: Parameters<AgentHookFactory>[0],
 ): AgentHook {
   const {
     anchorMessageId,
@@ -403,45 +410,50 @@ export function createGroupActionMemberBridgeHook(
     threadId,
   } = params;
   return {
-    handler: async (event: AgentHookEvent) => {
-      try {
-        await agentRuntimeService.completeGroupActionMember({
-          anchorMessageId,
-          expectedMembers,
-          finalState: event.finalState,
-          groupToolMessageId,
-          mode,
-          onComplete,
-          operationId: event.operationId,
-          parentOperationId,
-          reason: event.reason ?? 'done',
-          threadId,
-        });
-      } catch (error) {
-        console.error(
-          'Group-member bridge: failed to complete bridge for parent %s: %O',
-          parentOperationId,
-          error,
-        );
-      }
-    },
     id: 'group-member-bridge',
     type: 'onComplete' as const,
-    webhook: {
-      body: {
-        anchorMessageId,
-        expectedMembers,
-        groupToolMessageId,
-        mode,
-        onComplete,
-        parentOperationId,
-        threadId,
-      },
-      delivery: 'qstash' as const,
-      eventFields: ['operationId', 'reason', 'status'],
-      fallback: 'none' as const,
-      url: '/api/agent/webhooks/group-member-callback',
-    },
+    ...(execution === 'crossWorker'
+      ? {
+          webhook: {
+            body: {
+              anchorMessageId,
+              expectedMembers,
+              groupToolMessageId,
+              mode,
+              onComplete,
+              parentOperationId,
+              threadId,
+            },
+            delivery: 'qstash' as const,
+            eventFields: ['operationId', 'reason', 'status'],
+            fallback: 'none' as const,
+            url: '/api/agent/webhooks/group-member-callback',
+          },
+        }
+      : {
+          handler: async (event: AgentHookEvent) => {
+            try {
+              await agentRuntimeService.completeGroupActionMember({
+                anchorMessageId,
+                expectedMembers,
+                finalState: event.finalState,
+                groupToolMessageId,
+                mode,
+                onComplete,
+                operationId: event.operationId,
+                parentOperationId,
+                reason: event.reason ?? 'done',
+                threadId,
+              });
+            } catch (error) {
+              console.error(
+                'Group-member bridge: failed to complete bridge for parent %s: %O',
+                parentOperationId,
+                error,
+              );
+            }
+          },
+        }),
   };
 }
 

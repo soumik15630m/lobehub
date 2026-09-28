@@ -6,6 +6,7 @@ import { AiAgentService } from '../index';
 const {
   mockIsResourceAuthorOrAdmin,
   mockCreateOperation,
+  mockSupportsProcessHooks,
   mockGetAgentConfig,
   mockGetPreference,
   mockMessageCreate,
@@ -14,6 +15,7 @@ const {
 } = vi.hoisted(() => ({
   mockIsResourceAuthorOrAdmin: vi.fn(),
   mockCreateOperation: vi.fn(),
+  mockSupportsProcessHooks: vi.fn().mockReturnValue(true),
   mockGetAgentConfig: vi.fn(),
   mockGetPreference: vi.fn(),
   mockMessageCreate: vi.fn(),
@@ -130,6 +132,7 @@ vi.mock('@/server/services/agentRuntime', () => ({
   AgentRuntimeService: vi.fn().mockImplementation(function () {
     return {
       createOperation: mockCreateOperation,
+      supportsProcessHooks: mockSupportsProcessHooks,
     };
   }),
 }));
@@ -209,6 +212,7 @@ describe('AiAgentService.execAgent - model/provider override', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSupportsProcessHooks.mockReturnValue(true);
     mockMessageCreate.mockResolvedValue({ id: 'msg-1' });
     mockCreateOperation.mockResolvedValue({
       autoStarted: true,
@@ -267,6 +271,32 @@ describe('AiAgentService.execAgent - model/provider override', () => {
         provider: 'anthropic',
       });
       runSpy.mockRestore();
+    },
+  );
+
+  it.each([false, true])(
+    'resolves internal hook factories once for crossWorker=%s',
+    async (queue) => {
+      mockSupportsProcessHooks.mockReturnValue(!queue);
+      const handler = vi.fn();
+      const processHook = { id: 'completion', type: 'onComplete' as const, handler };
+      const durableHook = {
+        id: 'completion',
+        type: 'onComplete' as const,
+        webhook: { url: '/callback' },
+      };
+      const createHooks = vi.fn((execution: 'inProcess' | 'crossWorker') => [
+        execution === 'crossWorker' ? durableHook : processHook,
+      ]);
+      try {
+        await service.execAgent({ agentId: 'agent-1', prompt: 'Test', createHooks });
+        expect(createHooks).toHaveBeenCalledExactlyOnceWith(queue ? 'crossWorker' : 'inProcess');
+        expect(mockCreateOperation).toHaveBeenCalledWith(
+          expect.objectContaining({ hooks: [queue ? durableHook : processHook] }),
+        );
+      } finally {
+        mockSupportsProcessHooks.mockReturnValue(true);
+      }
     },
   );
 

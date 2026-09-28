@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+
 const mockGetUserSettings = vi.hoisted(() => vi.fn());
 const mockExecAgent = vi.hoisted(() => vi.fn());
 const mockFormatPrompt = vi.hoisted(() => vi.fn());
@@ -161,6 +163,67 @@ describe('AgentBridgeService', () => {
     mockIsRunningOperationAlive.mockResolvedValue(false);
     mockIsDeferredMessagesAvailable.mockReturnValue(true);
     mockDeferBotMessages.mockResolvedValue(true);
+  });
+
+  it('selects only handlers and completes the local reply without a webhook', async () => {
+    mockIsQueueAgentRuntimeEnabled.mockReturnValue(false);
+    const thread = createThread();
+    let completion: AgentHook | undefined;
+    mockExecAgent.mockImplementationOnce(async ({ createHooks }) => {
+      const hooks: AgentHook[] = createHooks('inProcess');
+      expect(hooks.every((hook) => hook.handler && !hook.webhook)).toBe(true);
+      completion = hooks.find((hook) => hook.type === 'onComplete');
+      return {
+        success: true,
+        operationId: 'op-1',
+        topicId: 'topic-1',
+        createdAt: new Date().toISOString(),
+      };
+    });
+    const pending = new AgentBridgeService(FAKE_DB, USER_ID).handleMention(
+      thread,
+      createMessage(),
+      {
+        agentId: 'agent-1',
+        client: createClient(),
+      },
+    );
+    await vi.waitFor(() => expect(completion).toBeDefined());
+    await completion!.handler!({
+      agentId: 'agent-1',
+      operationId: 'op-1',
+      userId: USER_ID,
+      reason: 'done',
+      lastAssistantContent: 'Completed locally',
+    });
+    await pending;
+    expect(mockExecAgent).toHaveBeenCalledTimes(1);
+    expect(thread.setState).toHaveBeenCalledWith(expect.objectContaining({ topicId: 'topic-1' }));
+  });
+
+  it('hands a heterogeneous completion to webhooks even when the Agent runtime is local', async () => {
+    mockIsQueueAgentRuntimeEnabled.mockReturnValue(false);
+    const thread = createThread();
+    mockExecAgent.mockImplementationOnce(async ({ createHooks }) => {
+      const hooks: AgentHook[] = createHooks('crossWorker');
+      expect(hooks.every((hook) => hook.webhook && !hook.handler)).toBe(true);
+      expect(hooks.find((hook) => hook.type === 'onComplete')!.webhook).toMatchObject({
+        delivery: 'qstash',
+        fallback: 'none',
+      });
+      return {
+        success: true,
+        operationId: 'op-1',
+        topicId: 'topic-1',
+        createdAt: new Date().toISOString(),
+      };
+    });
+    await new AgentBridgeService(FAKE_DB, USER_ID).handleMention(thread, createMessage(), {
+      agentId: 'agent-1',
+      client: createClient(),
+    });
+    expect(mockExecAgent).toHaveBeenCalledTimes(1);
+    expect(thread.setState).toHaveBeenCalledWith(expect.objectContaining({ topicId: 'topic-1' }));
   });
 
   it('calls execAgent with hooks in queue mode for mention', async () => {
@@ -908,7 +971,8 @@ describe('AgentBridgeService', () => {
       expect(mockExecAgent).toHaveBeenCalledTimes(1);
     });
 
-    it('defers when the reservation still reports the topic busy (check/reserve race)', async () => {
+    it.each([false, true])('defers a reservation race for queue=%s', async (queue) => {
+      mockIsQueueAgentRuntimeEnabled.mockReturnValue(queue);
       mockExecAgent.mockRejectedValueOnce(
         new Error('Topic topic-1 remained busy while starting operation agent-start-x'),
       );

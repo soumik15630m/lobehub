@@ -95,6 +95,7 @@ import { stepChangedCredentials } from './credentialFacts';
 import { logToolCallPc } from './formalObservation';
 import { type AgentHook, CriticalHookDeliveryError, hookDispatcher } from './hooks';
 import { buildLifecycleHookContext } from './hooks/lifecycleHookContext';
+import { validateCrossWorkerHooks } from './hooks/validateCrossWorkerHooks';
 import { HumanInterventionHandler } from './HumanInterventionHandler';
 import { buildMessagePatch } from './messagePatch';
 import { OperationTraceRecorder } from './OperationTraceRecorder';
@@ -564,6 +565,11 @@ export class AgentRuntimeService {
       );
     }
     return this.messageServiceInstance;
+  }
+
+  /** Whether scheduled steps stay in this process and can retain callback closures. */
+  supportsProcessHooks(): boolean {
+    return !this.queueService || this.queueService.isLocalExecution();
   }
 
   constructor(db: LobeChatDatabase, userId: string, options?: AgentRuntimeServiceOptions) {
@@ -1064,6 +1070,9 @@ export class AgentRuntimeService {
       workspaceId,
     } = params;
 
+    // Closures cannot follow a task to another worker. Validate before creating durable state.
+    if (!this.supportsProcessHooks()) validateCrossWorkerHooks(hooks);
+
     // Persist initial agent_operations row. CompletionLifecycle owns both
     // ends of the persistence lifecycle (start row here, terminal update
     // in dispatchHooks) and swallows DB errors so runtime startup is never
@@ -1318,7 +1327,7 @@ export class AgentRuntimeService {
         hookDispatcher.register(operationId, hooks);
         hooksRegistered = true;
 
-        // Persist webhook configs to state metadata for production mode
+        // Persist explicit webhook targets so another worker can restore them
         const serializedHooks = hookDispatcher.getSerializedHooks(operationId);
         if (serializedHooks && serializedHooks.length > 0) {
           const currentState = await this.coordinator.loadAgentState(operationId);

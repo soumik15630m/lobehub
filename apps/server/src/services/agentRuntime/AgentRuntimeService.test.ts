@@ -143,6 +143,7 @@ vi.mock('@/server/services/queue', () => ({
   QueueService: vi.fn().mockImplementation(function () {
     return {
       getImpl: vi.fn().mockReturnValue(null),
+      isLocalExecution: vi.fn().mockReturnValue(true),
       scheduleMessage: vi.fn(),
     };
   }),
@@ -407,6 +408,15 @@ describe('AgentRuntimeService', () => {
   });
 
   describe('constructor', () => {
+    it('reports process-hook support from the injected scheduler', () => {
+      expect(service.supportsProcessHooks()).toBe(true);
+      mockQueueService.isLocalExecution.mockReturnValue(false);
+      expect(service.supportsProcessHooks()).toBe(false);
+      expect(
+        new AgentRuntimeService(mockDb, mockUserId, { queueService: null }).supportsProcessHooks(),
+      ).toBe(true);
+    });
+
     it('should initialize with default base URL', () => {
       delete process.env.AGENT_RUNTIME_BASE_URL;
       const newService = new AgentRuntimeService(mockDb, mockUserId);
@@ -497,6 +507,21 @@ describe('AgentRuntimeService', () => {
       autoStart: true,
       initialMessages: [],
     };
+
+    it('rejects process handlers before creating or scheduling a cross-worker operation', async () => {
+      mockQueueService.isLocalExecution.mockReturnValue(false);
+      const handler = vi.fn();
+      await expect(
+        service.createOperation({
+          ...mockParams,
+          hooks: [{ id: 'callback', type: 'onComplete', handler }],
+        }),
+      ).rejects.toThrow(/handler functions cannot be transferred/);
+      expect(mockCoordinator.createAgentOperation).not.toHaveBeenCalled();
+      expect(mockCoordinator.saveAgentState).not.toHaveBeenCalled();
+      expect(mockQueueService.scheduleMessage).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
+    });
 
     it.each([undefined, false, true])(
       'persists the snapshot opt-in for resumed steps (%s)',

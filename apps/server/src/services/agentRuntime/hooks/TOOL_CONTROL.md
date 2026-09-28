@@ -14,10 +14,40 @@ A deny stops only its tool: blocked result, zero attempts, no mock, real executi
 retry, or execution fee. Allow still goes through product permissions and approval.
 Cancellation stops waiting and a late allow cannot start execution.
 
-All controls run before observation/mock handlers. A local before handler is
-called once; the first mock wins. Legacy dual handler/webhook hooks select the
-handler locally and the webhook in queue mode. Critical notification callbacks
-retain `fallback: 'none'` failure propagation.
+All controls run before observation/mock handlers. Each in-process before handler is
+called once; the first mock wins. Every hook specifies exactly one target: a
+`handler` or a `webhook`. The dispatcher never selects a target based on the Agent's
+scheduling mode. Task producers choose their callback before registration; cross-worker
+operations reject function handlers before creating durable state. Worker-created
+callbacks can still execute in that worker. Only webhook configurations are persisted.
+When restoring, the durable webhook list is authoritative (including an empty list),
+and is combined with process callbacks; duplicate hook IDs are rejected before delivery.
+Internal producers that need different callbacks across execution paths use
+`createHooks(execution)` on server-only exec parameters. It resolves once, after the
+actual scheduler and heterogeneous execution path are known, and returns explicit
+registrations. It is neither a dispatcher mode nor part of the serialized schema.
+Critical notification callbacks retain `fallback: 'none'` failure propagation.
+Cross-worker startup rejects a critical QStash callback when `QSTASH_TOKEN` is
+missing, before creating operation state or dispatching the agent. Heterogeneous
+execution crosses this boundary even when the normal runtime uses a local queue.
+The current built-in Bot/sub-agent durable callbacks require QStash; preserving
+those heterogeneous features in deployments without QStash needs a separate
+internal durable callback path. This compatibility decision remains open for
+this draft; the ordinary in-process path continues to use handlers.
+
+Example registration (server-only):
+
+```ts
+const hooks: AgentHook[] = [
+  { id: 'local-observer', type: 'onComplete', handler: observeCompletion },
+  { id: 'http-observer', type: 'onComplete', webhook: { url: 'https://example.com/hook' } },
+];
+```
+
+Each entry has one target. Register both entries only when both effects are
+intended. For operations that cross a worker boundary, use webhook entries;
+callbacks created by the executing worker remain process-local. Stored JSON
+continues to contain only `{ id, type, matcher?, webhook }` without new fields.
 
 ## Preparation and persistence
 

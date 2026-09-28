@@ -35,6 +35,7 @@ import { TopicModel } from '@/database/models/topic';
 import { agentEvalRunTopics, messagePlugins, messages, topics } from '@/database/schemas';
 import { AgentService } from '@/server/services/agent';
 import { AgentRuntimeService } from '@/server/services/agentRuntime/AgentRuntimeService';
+import type { AgentHookEvent } from '@/server/services/agentRuntime/hooks/types';
 import type { EvalRuntimeContext } from '@/server/services/agentRuntime/types';
 import { AiAgentService } from '@/server/services/aiAgent';
 import {
@@ -860,35 +861,40 @@ export class AgentEvalRunService {
         appContext,
         autoStart: true,
         trigger: RequestTrigger.Eval,
-        hooks: [
+        createHooks: (execution) => [
           {
-            handler: async (event) => {
-              // Local mode: directly record completion
-              const service = new AgentEvalRunService(db, userId, this.workspaceId);
-              await service.recordTrajectoryCompletion({
-                runId,
-                status: event.status || event.reason || 'done',
-                telemetry: {
-                  completionReason: event.reason,
-                  cost: (event.cost ?? 0) + prevCost,
-                  duration: event.duration,
-                  errorDetail: event.errorDetail,
-                  errorMessage: event.errorMessage,
-                  llmCalls: (event.llmCalls ?? 0) + prevLlmCalls,
-                  steps: (event.steps ?? 0) + prevSteps,
-                  toolCalls: (event.toolCalls ?? 0) + prevToolCalls,
-                  totalTokens: (event.totalTokens ?? 0) + prevTokens,
-                },
-                testCaseId,
-              });
-            },
             id: 'eval-trajectory-complete',
             type: 'onComplete' as const,
-            webhook: {
-              body: { runId, testCaseId, userId },
-              delivery: 'qstash' as const,
-              url: webhookUrl,
-            },
+            ...(execution === 'crossWorker'
+              ? {
+                  webhook: {
+                    body: { runId, testCaseId, userId },
+                    delivery: 'qstash' as const,
+                    url: webhookUrl,
+                  },
+                }
+              : {
+                  handler: async (event: AgentHookEvent) => {
+                    // Local mode: directly record completion
+                    const service = new AgentEvalRunService(db, userId, this.workspaceId);
+                    await service.recordTrajectoryCompletion({
+                      runId,
+                      status: event.status || event.reason || 'done',
+                      telemetry: {
+                        completionReason: event.reason,
+                        cost: (event.cost ?? 0) + prevCost,
+                        duration: event.duration,
+                        errorDetail: event.errorDetail,
+                        errorMessage: event.errorMessage,
+                        llmCalls: (event.llmCalls ?? 0) + prevLlmCalls,
+                        steps: (event.steps ?? 0) + prevSteps,
+                        toolCalls: (event.toolCalls ?? 0) + prevToolCalls,
+                        totalTokens: (event.totalTokens ?? 0) + prevTokens,
+                      },
+                      testCaseId,
+                    });
+                  },
+                }),
           },
         ],
         ...getEvalContextParams(envPrompt, environment, params.caseId),
@@ -1006,36 +1012,41 @@ export class AgentEvalRunService {
         appContext,
         autoStart: true,
         trigger: RequestTrigger.Eval,
-        hooks: [
+        createHooks: (execution) => [
           {
-            handler: async (event) => {
-              // Local mode: directly record thread completion
-              const service = new AgentEvalRunService(db, userId, this.workspaceId);
-              await service.recordThreadCompletion({
-                runId,
-                status: event.status || event.reason || 'done',
-                telemetry: {
-                  completionReason: event.reason,
-                  cost: (event.cost ?? 0) + prevCost,
-                  duration: event.duration,
-                  errorMessage: event.errorMessage,
-                  llmCalls: (event.llmCalls ?? 0) + prevLlmCalls,
-                  steps: (event.steps ?? 0) + prevSteps,
-                  toolCalls: (event.toolCalls ?? 0) + prevToolCalls,
-                  totalTokens: (event.totalTokens ?? 0) + prevTokens,
-                },
-                testCaseId,
-                threadId,
-                topicId,
-              });
-            },
             id: 'eval-thread-complete',
             type: 'onComplete' as const,
-            webhook: {
-              body: { runId, testCaseId, threadId, topicId, userId },
-              delivery: 'qstash' as const,
-              url: webhookUrl,
-            },
+            ...(execution === 'crossWorker'
+              ? {
+                  webhook: {
+                    body: { runId, testCaseId, threadId, topicId, userId },
+                    delivery: 'qstash' as const,
+                    url: webhookUrl,
+                  },
+                }
+              : {
+                  handler: async (event: AgentHookEvent) => {
+                    // Local mode: directly record thread completion
+                    const service = new AgentEvalRunService(db, userId, this.workspaceId);
+                    await service.recordThreadCompletion({
+                      runId,
+                      status: event.status || event.reason || 'done',
+                      telemetry: {
+                        completionReason: event.reason,
+                        cost: (event.cost ?? 0) + prevCost,
+                        duration: event.duration,
+                        errorMessage: event.errorMessage,
+                        llmCalls: (event.llmCalls ?? 0) + prevLlmCalls,
+                        steps: (event.steps ?? 0) + prevSteps,
+                        toolCalls: (event.toolCalls ?? 0) + prevToolCalls,
+                        totalTokens: (event.totalTokens ?? 0) + prevTokens,
+                      },
+                      testCaseId,
+                      threadId,
+                      topicId,
+                    });
+                  },
+                }),
           },
         ],
         ...getEvalContextParams(envPrompt, environment, caseId),
@@ -1327,35 +1338,40 @@ export class AgentEvalRunService {
         autoStart: true,
         ...(params.deviceId && { deviceId: params.deviceId }),
         trigger: RequestTrigger.Eval,
-        hooks: [
+        createHooks: (execution) => [
           {
-            handler: async (event) => {
-              // Local mode: directly record completion
-              const service = new AgentEvalRunService(db, userId, this.workspaceId);
-              await service.recordTrajectoryCompletion({
-                runId,
-                status: event.status || event.reason || 'done',
-                telemetry: {
-                  completionReason: event.reason,
-                  cost: event.cost,
-                  duration: event.duration,
-                  errorDetail: event.errorDetail,
-                  errorMessage: event.errorMessage,
-                  llmCalls: event.llmCalls,
-                  steps: event.steps,
-                  toolCalls: event.toolCalls,
-                  totalTokens: event.totalTokens,
-                },
-                testCaseId,
-              });
-            },
             id: 'eval-trajectory-complete',
             type: 'onComplete' as const,
-            webhook: {
-              body: { runId, testCaseId, userId },
-              delivery: 'qstash' as const,
-              url: webhookUrl,
-            },
+            ...(execution === 'crossWorker'
+              ? {
+                  webhook: {
+                    body: { runId, testCaseId, userId },
+                    delivery: 'qstash' as const,
+                    url: webhookUrl,
+                  },
+                }
+              : {
+                  handler: async (event: AgentHookEvent) => {
+                    // Local mode: directly record completion
+                    const service = new AgentEvalRunService(db, userId, this.workspaceId);
+                    await service.recordTrajectoryCompletion({
+                      runId,
+                      status: event.status || event.reason || 'done',
+                      telemetry: {
+                        completionReason: event.reason,
+                        cost: event.cost,
+                        duration: event.duration,
+                        errorDetail: event.errorDetail,
+                        errorMessage: event.errorMessage,
+                        llmCalls: event.llmCalls,
+                        steps: event.steps,
+                        toolCalls: event.toolCalls,
+                        totalTokens: event.totalTokens,
+                      },
+                      testCaseId,
+                    });
+                  },
+                }),
           },
         ],
         ...getEvalContextParams(envPrompt, environment, caseId),
@@ -1605,36 +1621,41 @@ export class AgentEvalRunService {
         appContext: { threadId, topicId },
         autoStart: true,
         trigger: RequestTrigger.Eval,
-        hooks: [
+        createHooks: (execution) => [
           {
-            handler: async (event) => {
-              // Local mode: directly record thread completion
-              const service = new AgentEvalRunService(db, userId, this.workspaceId);
-              await service.recordThreadCompletion({
-                runId,
-                status: event.status || event.reason || 'done',
-                telemetry: {
-                  completionReason: event.reason,
-                  cost: event.cost,
-                  duration: event.duration,
-                  errorMessage: event.errorMessage,
-                  llmCalls: event.llmCalls,
-                  steps: event.steps,
-                  toolCalls: event.toolCalls,
-                  totalTokens: event.totalTokens,
-                },
-                testCaseId,
-                threadId,
-                topicId,
-              });
-            },
             id: 'eval-thread-complete',
             type: 'onComplete' as const,
-            webhook: {
-              body: { runId, testCaseId, threadId, topicId, userId },
-              delivery: 'qstash' as const,
-              url: webhookUrl,
-            },
+            ...(execution === 'crossWorker'
+              ? {
+                  webhook: {
+                    body: { runId, testCaseId, threadId, topicId, userId },
+                    delivery: 'qstash' as const,
+                    url: webhookUrl,
+                  },
+                }
+              : {
+                  handler: async (event: AgentHookEvent) => {
+                    // Local mode: directly record thread completion
+                    const service = new AgentEvalRunService(db, userId, this.workspaceId);
+                    await service.recordThreadCompletion({
+                      runId,
+                      status: event.status || event.reason || 'done',
+                      telemetry: {
+                        completionReason: event.reason,
+                        cost: event.cost,
+                        duration: event.duration,
+                        errorMessage: event.errorMessage,
+                        llmCalls: event.llmCalls,
+                        steps: event.steps,
+                        toolCalls: event.toolCalls,
+                        totalTokens: event.totalTokens,
+                      },
+                      testCaseId,
+                      threadId,
+                      topicId,
+                    });
+                  },
+                }),
           },
         ],
         ...getEvalContextParams(envPrompt, environment, caseId),

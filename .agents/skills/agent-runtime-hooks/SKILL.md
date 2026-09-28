@@ -200,6 +200,6 @@ Note: CallAgent hooks require `parentOperationId` in `ExecSubAgentTaskParams`.
 - **Fire-and-forget**: All handlers return `Promise<void>`. Errors are non-fatal.
 - **Exception**: `beforeToolCall` supports mock via `event.mock()` — uses `dispatchBeforeToolCall()` which returns the mock result.
 - **Sequential**: Same-type hooks run in registration order.
-- **Local only**: `beforeToolCall` mock only works in local mode (in-memory hooks). Webhook mode does not support mocking.
+- **Process-bound callbacks**: `beforeToolCall` mock requires a handler registered in the executing process. Hooks specify exactly one of `handler` or `webhook`; Dispatcher does not inspect local/queue mode. Task producers choose the target before registration, and cross-worker operations reject function handlers. Webhooks never provide mock results.
 - **Scoped per operation**: Auto-cleaned via `hookDispatcher.unregister()` on completion.
 - **Sandbox/MCP**: No separate hooks — they go through `executeTool`, so `beforeToolCall`/`afterToolCall` cover them. Use `event.identifier` to filter.
