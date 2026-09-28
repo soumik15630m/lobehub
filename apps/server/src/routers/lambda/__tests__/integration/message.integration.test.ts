@@ -862,6 +862,37 @@ describe('Message Router Integration Tests', () => {
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     });
 
+    it.each([
+      { createdAt: 'not-a-date', id: 'cur-u2' },
+      { createdAt: '2024-01-01 00:00:02', id: 'cur-u2' },
+      { createdAt: '2024-01-01T00:00:02.000000Z', id: '' },
+    ])('rejects a malformed cursor %o as BAD_REQUEST', async (cursor) => {
+      const caller = messageRouter.createCaller(createTestContext(userId));
+
+      await expect(
+        caller.getMessagesByCursor({ cursor, topicId: testTopicId }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('accepts the microsecond cursor format that nextCursor emits', async () => {
+      const [topic] = await serverDB
+        .insert(topics)
+        .values({ title: 'Cursor Format Topic', userId })
+        .returning();
+      await seedTwoRounds(topic.id);
+
+      const caller = messageRouter.createCaller(createTestContext(userId));
+      const newest = await caller.getMessagesByCursor({ roundLimit: 1, topicId: topic.id });
+      expect(newest.nextCursor?.createdAt).toMatch(/\.\d{6}Z$/);
+
+      const older = await caller.getMessagesByCursor({
+        cursor: newest.nextCursor,
+        roundLimit: 1,
+        topicId: topic.id,
+      });
+      expect(older.messages.map((m) => m.id)).toEqual(['cur-u1', 'cur-a1']);
+    });
+
     it('serves a link share from topicShareId alone, with visitor-safe errors', async () => {
       const { topicShares } = await import('@/database/schemas');
 

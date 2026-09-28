@@ -539,7 +539,10 @@ export const messageRouter = router({
         // an unbounded value would let any caller (incl. anonymous share
         // visitors) force an arbitrarily large scan of a long topic.
         countBudget: z.number().int().positive().max(MAX_CURSOR_COUNT_BUDGET).optional(),
-        cursor: z.object({ createdAt: z.string(), id: z.string() }).nullish(),
+        // `createdAt` is cast to `::timestamptz` in SQL, so reject anything that
+        // isn't the UTC ISO timestamp `nextCursor` emits (up to microseconds)
+        // here — otherwise malformed input surfaces as a Postgres 500.
+        cursor: z.object({ createdAt: z.string().datetime(), id: z.string().min(1) }).nullish(),
         roundLimit: z.number().int().positive().max(MAX_CURSOR_ROUND_LIMIT).optional(),
         sessionId: z.string().nullish(),
         skipWorks: z.boolean().optional(),
