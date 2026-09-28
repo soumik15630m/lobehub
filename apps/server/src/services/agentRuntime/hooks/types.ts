@@ -55,7 +55,7 @@ export type AgentHook = {
   | {
       handler: HookHandler;
       type: AgentHookType;
-      webhook?: NotificationWebhook;
+      webhook?: never;
     }
   | {
       handler?: never;
@@ -68,3 +68,6 @@ export type AgentHook = {
 
 /** Webhook-only configuration persisted on the operation; validated again before dispatch. */
 export type SerializedHook = SerializedAgentHook;
+
+/** Internal task producers resolve one target after the execution path is known. Never persisted. */
+export type AgentHookFactory = (execution: 'inProcess' | 'crossWorker') => AgentHook[];

@@ -709,6 +709,7 @@ export class AiAgentService {
       files,
       functionTools,
       hooks,
+      createHooks,
       instructions,
       chatConfigOverride,
       toolModeOverride,
@@ -1100,6 +1101,15 @@ export class AiAgentService {
       userMessageId: turn.userMessageId,
     };
 
+    const operationHooks = [
+      ...(hooks ?? []),
+      ...(createHooks?.(
+        isHeteroAgent || !this.agentRuntimeService.supportsProcessHooks()
+          ? 'crossWorker'
+          : 'inProcess',
+      ) ?? []),
+    ];
+
     if (isHeteroAgent) {
       return dispatchHeteroAgent(
         {
@@ -1119,7 +1129,7 @@ export class AiAgentService {
           effectiveRequestedDeviceId: turn.effectiveRequestedDeviceId,
           heteroType: turn.heteroType,
           heterogeneousProvider: turn.heterogeneousProvider,
-          hooks,
+          hooks: operationHooks,
           isPublicWorkspaceAgent,
           localDeviceId,
           maxSteps,
@@ -1360,7 +1370,7 @@ export class AiAgentService {
         enableExpertise,
         evalContext,
         evalRuntime,
-        hooks,
+        hooks: operationHooks,
         initialContext,
         initialStepCount,
         maxSteps,
@@ -1544,16 +1554,20 @@ export class AiAgentService {
           topicId: params.topicId,
         },
         {
-          bridgeHookFactory: (threadId) =>
-            createGroupActionMemberBridgeHook(this.agentRuntimeService, {
-              anchorMessageId: params.anchorMessageId,
-              expectedMembers: params.expectedMembers,
-              groupToolMessageId: params.groupToolMessageId,
-              mode: 'isolated',
-              onComplete: params.onComplete,
-              parentOperationId: params.parentOperationId,
-              threadId,
-            }),
+          bridgeHookFactory: (threadId, execution) =>
+            createGroupActionMemberBridgeHook(
+              this.agentRuntimeService,
+              {
+                anchorMessageId: params.anchorMessageId,
+                expectedMembers: params.expectedMembers,
+                groupToolMessageId: params.groupToolMessageId,
+                mode: 'isolated',
+                onComplete: params.onComplete,
+                parentOperationId: params.parentOperationId,
+                threadId,
+              },
+              execution,
+            ),
           isSubAgent: true,
           logScope: 'execVirtualSubAgent',
           // Tag the op as a group member so the abandon path routes its parent

@@ -245,20 +245,23 @@ describe('AgentEvalRunService', () => {
       expect(mockExecAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           autoStart: true,
-          hooks: expect.arrayContaining([
-            expect.objectContaining({
-              id: 'eval-trajectory-complete',
-              type: 'onComplete',
-              webhook: {
-                body: { runId: run.id, testCaseId: testCase.id, userId },
-                delivery: 'qstash',
-                url: '/api/workflows/agent-eval-run/on-trajectory-complete',
-              },
-            }),
-          ]),
+          createHooks: expect.any(Function),
           prompt: 'Hello world',
           userInterventionConfig: { approvalMode: 'headless' },
         }),
+      );
+      expect(mockExecAgent.mock.calls[0][0].createHooks('crossWorker')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'eval-trajectory-complete',
+            type: 'onComplete',
+            webhook: {
+              body: { runId: run.id, testCaseId: testCase.id, userId },
+              delivery: 'qstash',
+              url: '/api/workflows/agent-eval-run/on-trajectory-complete',
+            },
+          }),
+        ]),
       );
     });
 

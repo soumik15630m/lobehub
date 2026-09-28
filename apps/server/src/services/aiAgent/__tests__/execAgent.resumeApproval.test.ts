@@ -155,6 +155,7 @@ vi.mock('@/server/services/agentRuntime', () => ({
   AgentRuntimeService: vi.fn().mockImplementation(function () {
     return {
       createOperation: mockCreateOperation,
+      supportsProcessHooks: vi.fn().mockReturnValue(true),
       ensureInterventionContinuationStarted: mockEnsureInterventionContinuationStarted,
       interruptOperation: mockInterruptOperation,
       loadInterventionContinuationState: mockLoadInterventionContinuationState,

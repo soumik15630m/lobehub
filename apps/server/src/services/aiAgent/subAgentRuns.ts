@@ -14,7 +14,7 @@ import type { AgentOperationModel } from '@/database/models/agentOperation';
 import type { MessageModel } from '@/database/models/message';
 import type { ThreadModel } from '@/database/models/thread';
 import type { AgentRuntimeService } from '@/server/services/agentRuntime';
-import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import type { AgentHook, AgentHookFactory } from '@/server/services/agentRuntime/hooks/types';
 import type {
   ExecGroupMemberParams,
   ExecGroupMemberResult,
@@ -49,7 +49,7 @@ export interface ExecAgentThreadRunOptions {
    * Receives the freshly-created isolation thread id. Only used when
    * `resumeParentOnComplete` is set.
    */
-  bridgeHookFactory?: (threadId: string) => AgentHook;
+  bridgeHookFactory?: (threadId: string, execution: Parameters<AgentHookFactory>[0]) => AgentHook;
   /**
    * chatConfig overrides (thinking / reasoning-effort extend params) for
    * the spawned run, merged over the executing agent's own chatConfig.
@@ -229,34 +229,39 @@ const startAgentThreadRun = async (
   }
 
   // 3. Create hooks for updating Thread metadata and source message
-  const threadHooks = createThreadHooks(
-    deps.agentRuntimeService,
-    deps.threadModel,
-    deps.messageModel,
-    thread.id,
-    startedAt,
-    parentMessageId,
-    options.logScope,
-    usageBaseline,
-  );
-  // For the virtual sub-agent path, also register the completion bridge that
-  // backfills the parent's placeholder tool message and resumes the parked
-  // parent op once the child run is done. Registered last so its tool-message
-  // backfill (content + pluginState) is the final write.
-  const hooks =
-    options.resumeParentOnComplete && parentOperationId
+  const createHooks: AgentHookFactory = (execution) => {
+    const threadHooks =
+      execution === 'crossWorker'
+        ? []
+        : createThreadHooks(
+            deps.agentRuntimeService,
+            deps.threadModel,
+            deps.messageModel,
+            thread.id,
+            startedAt,
+            parentMessageId,
+            options.logScope,
+            usageBaseline,
+          );
+    // For the virtual sub-agent path, also register the completion bridge that
+    // backfills the parent's placeholder tool message and resumes the parked
+    // parent op once the child run is done. Registered last so its tool-message
+    // backfill (content + pluginState) is the final write.
+    return options.resumeParentOnComplete && parentOperationId
       ? [
           ...threadHooks,
           options.bridgeHookFactory
-            ? options.bridgeHookFactory(thread.id)
+            ? options.bridgeHookFactory(thread.id, execution)
             : createSubAgentBridgeHook(
                 deps.agentRuntimeService,
                 parentOperationId,
                 parentMessageId,
                 thread.id,
+                execution,
               ),
         ]
       : threadHooks;
+  };
 
   // Inherit parent op's trigger so sub-agent rows stay attributable to the
   // original entry point (chat / bot / cli / eval / …). Lookup is best-effort
@@ -304,7 +309,7 @@ const startAgentThreadRun = async (
       autoStart: true,
       chatConfigOverride: options.chatConfig,
       deviceId: options.deviceId,
-      hooks,
+      createHooks,
       localDeviceId: options.localDeviceId,
       // Explicit sub-agent model override resolved at the spawn site.
       model: options.model,
@@ -455,15 +460,19 @@ const startAgentMember = async (
     autoStart: true,
     disableTools,
     ephemeralUserMessage: speakerInstruction,
-    hooks: [
-      createGroupActionMemberBridgeHook(deps.agentRuntimeService, {
-        anchorMessageId,
-        expectedMembers,
-        groupToolMessageId,
-        mode: 'in_group',
-        onComplete,
-        parentOperationId,
-      }),
+    createHooks: (execution) => [
+      createGroupActionMemberBridgeHook(
+        deps.agentRuntimeService,
+        {
+          anchorMessageId,
+          expectedMembers,
+          groupToolMessageId,
+          mode: 'in_group',
+          onComplete,
+          parentOperationId,
+        },
+        execution,
+      ),
     ],
     parentMessageId: supervisorMessageId ?? groupToolMessageId,
     parentOperationId,

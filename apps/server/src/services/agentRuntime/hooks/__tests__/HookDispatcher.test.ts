@@ -168,7 +168,7 @@ describe('HookDispatcher', () => {
     it('should deliver webhook for hooks with webhook config', async () => {
       dispatcher.register(operationId, [
         {
-          handler: vi.fn(), // handler not called in production mode
+          // handler not called in production mode
           id: 'webhook-hook',
           type: 'onComplete',
           webhook: { url: 'https://example.com/hook' },
@@ -190,7 +190,6 @@ describe('HookDispatcher', () => {
     it('should merge webhook.body into payload', async () => {
       dispatcher.register(operationId, [
         {
-          handler: vi.fn(),
           id: 'custom-body-hook',
           type: 'onComplete',
           webhook: {
@@ -213,7 +212,6 @@ describe('HookDispatcher', () => {
     it('should only include selected event fields when eventFields is set', async () => {
       dispatcher.register(operationId, [
         {
-          handler: vi.fn(),
           id: 'projected-hook',
           type: 'onError',
           webhook: {
@@ -251,11 +249,9 @@ describe('HookDispatcher', () => {
       });
     });
 
-    it('should not call local handler in production mode', async () => {
-      const handler = vi.fn();
+    it('delivers an explicit webhook in queue mode', async () => {
       dispatcher.register(operationId, [
         {
-          handler,
           id: 'prod-hook',
           type: 'onComplete',
           webhook: { url: 'https://example.com/hook' },
@@ -265,10 +261,10 @@ describe('HookDispatcher', () => {
       const serialized = dispatcher.getSerializedHooks(operationId);
       await dispatcher.dispatch(operationId, 'onComplete', makeEvent(), serialized);
 
-      expect(handler).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
-    it('should skip hooks without webhook config in production mode', async () => {
+    it('does not send HTTP for an explicit process handler', async () => {
       dispatcher.register(operationId, [
         { handler: vi.fn(), id: 'local-only', type: 'onComplete' },
       ]);
@@ -332,13 +328,11 @@ describe('HookDispatcher', () => {
 
       dispatcher.register(operationId, [
         {
-          handler: vi.fn(),
           id: 'critical-hook',
           type: 'onComplete',
           webhook: { delivery: 'qstash', fallback: 'none', url: 'https://example.com/critical' },
         },
         {
-          handler: vi.fn(),
           id: 'normal-hook',
           type: 'onComplete',
           webhook: { url: 'https://example.com/normal' },
@@ -369,7 +363,6 @@ describe('HookDispatcher', () => {
       dispatcher.register(operationId, [
         { handler: vi.fn(), id: 'local-only', type: 'onComplete' },
         {
-          handler: vi.fn(),
           id: 'with-webhook',
           type: 'onComplete',
           webhook: { url: '/api/hook' },
@@ -389,7 +382,7 @@ describe('HookDispatcher', () => {
   });
 
   describe('canDeliver', () => {
-    it('answers per mode: a handler-only hook reaches nobody in queue mode', () => {
+    it('recognizes an explicit handler regardless of queue mode', () => {
       dispatcher.register(operationId, [
         { handler: vi.fn(), id: 'local-only', type: 'onComplete' },
       ]);
@@ -397,12 +390,12 @@ describe('HookDispatcher', () => {
       expect(dispatcher.canDeliver(operationId, 'onComplete')).toBe(true);
 
       vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(true);
-      expect(dispatcher.canDeliver(operationId, 'onComplete')).toBe(false);
+      expect(dispatcher.canDeliver(operationId, 'onComplete')).toBe(true);
     });
 
     it('counts a webhook hook in both modes', () => {
       dispatcher.register(operationId, [
-        { handler: vi.fn(), id: 'with-webhook', type: 'onComplete', webhook: { url: '/api/hook' } },
+        { id: 'with-webhook', type: 'onComplete', webhook: { url: '/api/hook' } },
       ]);
 
       expect(dispatcher.canDeliver(operationId, 'onComplete')).toBe(true);
@@ -857,7 +850,7 @@ describe('HookDispatcher', () => {
       });
     });
 
-    it('should only mock in local mode, not production mode', async () => {
+    it('allows a handler registered in the executing worker to mock regardless of queue mode', async () => {
       vi.mocked(isQueueAgentRuntimeEnabled).mockReturnValue(true);
 
       dispatcher.register(operationId, [
@@ -870,7 +863,7 @@ describe('HookDispatcher', () => {
         },
       ]);
 
-      // dispatchBeforeToolCall only runs in local mode
+      // This closure was registered in the executing process, not transferred by the queue.
       const result = await dispatcher.dispatchBeforeToolCall(operationId, {
         apiName: 'search',
         args: {},
@@ -879,7 +872,10 @@ describe('HookDispatcher', () => {
         stepIndex: 0,
       });
 
-      expect(result).toBeNull();
+      expect(result).toEqual({
+        isMocked: true,
+        result: { content: '{"mocked":true}', success: true },
+      });
     });
 
     it('should not affect other hook types when beforeToolCall is registered', async () => {
@@ -1072,7 +1068,6 @@ describe('HookDispatcher', () => {
 
       dispatcher.register(operationId, [
         {
-          handler: vi.fn(),
           id: 'tool-webhook',
           type: 'afterToolCall',
           webhook: { url: 'https://example.com/afterToolCall' },

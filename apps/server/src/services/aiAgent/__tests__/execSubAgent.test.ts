@@ -252,15 +252,18 @@ describe('AiAgentService.execSubAgent', () => {
           topicId: 'topic-1',
         },
         autoStart: true,
-        hooks: expect.arrayContaining([
-          expect.objectContaining({ id: 'thread-metadata-update', type: 'afterStep' }),
-          expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
-        ]),
+        createHooks: expect.any(Function),
         prompt: 'Test instruction',
         userInterventionConfig: {
           approvalMode: 'headless',
         },
       });
+      expect(execAgentSpy.mock.calls[0][0].createHooks!('inProcess')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'thread-metadata-update', type: 'afterStep' }),
+          expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
+        ]),
+      );
     });
 
     it('should run deferred lobe-agent children through execVirtualSubAgent', async () => {
@@ -295,12 +298,15 @@ describe('AiAgentService.execSubAgent', () => {
             threadId: 'thread-123',
             topicId: 'topic-1',
           }),
-          hooks: expect.arrayContaining([
-            expect.objectContaining({ id: 'sub-agent-bridge', type: 'onComplete' }),
-          ]),
+          createHooks: expect.any(Function),
           parentOperationId: 'parent-op-1',
           trigger: 'cli',
         }),
+      );
+      expect(execAgentSpy.mock.calls[0][0].createHooks!('inProcess')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'sub-agent-bridge', type: 'onComplete' }),
+        ]),
       );
     });
 
@@ -557,15 +563,20 @@ describe('AiAgentService.execSubAgent', () => {
       // Verify that hooks were passed with onComplete
       expect(execAgentSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          hooks: expect.arrayContaining([
-            expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
-          ]),
+          createHooks: expect.any(Function),
         }),
+      );
+      expect(execAgentSpy.mock.calls[0][0].createHooks!('inProcess')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'thread-completion', type: 'onComplete' }),
+        ]),
       );
 
       // Get the onComplete hook handler
       const callArgs = execAgentSpy.mock.calls[0][0];
-      const onCompleteHook = callArgs.hooks?.find((h: any) => h.id === 'thread-completion');
+      const onCompleteHook = callArgs
+        .createHooks?.('inProcess')
+        .find((h: any) => h.id === 'thread-completion');
 
       expect(onCompleteHook).toBeDefined();
       expect(onCompleteHook!.handler).toBeInstanceOf(Function);
@@ -635,21 +646,24 @@ describe('AiAgentService.execSubAgent', () => {
             subAgentProgress: { parentOperationId: 'parent-op-2', toolMessageId: 'tool-msg-2' },
             threadId: 'thread-old',
           }),
-          hooks: expect.arrayContaining([
-            expect.objectContaining({
-              id: 'sub-agent-bridge',
-              webhook: expect.objectContaining({
-                body: {
-                  parentOperationId: 'parent-op-2',
-                  threadId: 'thread-old',
-                  toolMessageId: 'tool-msg-2',
-                },
-              }),
-            }),
-          ]),
+          createHooks: expect.any(Function),
           parentOperationId: 'parent-op-2',
           prompt: 'Hand over what you found so far',
         }),
+      );
+      expect(execAgentSpy.mock.calls[0][0].createHooks!('crossWorker')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'sub-agent-bridge',
+            webhook: expect.objectContaining({
+              body: {
+                parentOperationId: 'parent-op-2',
+                threadId: 'thread-old',
+                toolMessageId: 'tool-msg-2',
+              },
+            }),
+          }),
+        ]),
       );
       expect(result).toMatchObject({
         operationId: 'op-new',
@@ -763,9 +777,9 @@ describe('AiAgentService.execSubAgent', () => {
         metadata: expect.objectContaining({ ...carried, operationId: 'op-new' }),
       });
 
-      const completion = execAgentSpy.mock.calls[0][0].hooks?.find(
-        (h) => h.id === 'thread-completion',
-      );
+      const completion = execAgentSpy.mock.calls[0][0]
+        .createHooks?.('inProcess')
+        .find((h) => h.id === 'thread-completion');
       await completion!.handler!({
         finalState: {
           cost: { total: 0.25 },

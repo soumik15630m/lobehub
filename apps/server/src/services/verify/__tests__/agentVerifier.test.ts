@@ -118,7 +118,8 @@ describe('createVerifierAgentRunner', () => {
     const runner = createVerifierAgentRunner({ ...baseParams, workspaceId: 'ws-1' })!;
     await runner(runnerArgs);
 
-    const hooks = execParams().hooks;
+    const hooks = execParams().createHooks('crossWorker');
+    expect(hooks[0].handler).toBeUndefined();
     expect(hooks).toEqual([
       expect.objectContaining({
         id: 'verify-agent-terminal',
@@ -136,7 +137,7 @@ describe('createVerifierAgentRunner', () => {
       }),
     ]);
 
-    await hooks[0].handler({
+    await execParams().createHooks('inProcess')[0].handler({
       agentId: 'agent',
       errorMessage: 'bad key',
       operationId: 'verifier-op-1',

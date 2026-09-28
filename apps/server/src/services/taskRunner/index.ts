@@ -12,6 +12,7 @@ import { BriefModel } from '@/database/models/brief';
 import { TaskModel } from '@/database/models/task';
 import { TaskTopicModel } from '@/database/models/taskTopic';
 import type { LobeChatDatabase } from '@/database/type';
+import type { AgentHookEvent } from '@/server/services/agentRuntime/hooks/types';
 import { AiAgentService } from '@/server/services/aiAgent';
 import { TaskLifecycleService } from '@/server/services/taskLifecycle';
 
@@ -230,32 +231,37 @@ export class TaskRunnerService {
         additionalPluginIds: pluginIds,
         ...(typeof taskConfig.model === 'string' && { model: taskConfig.model }),
         ...(typeof taskConfig.provider === 'string' && { provider: taskConfig.provider }),
-        hooks: [
+        createHooks: (execution) => [
           {
-            handler: async (event) => {
-              await taskLifecycle.onTopicComplete({
-                errorCode: event.errorType,
-                errorMessage: event.errorMessage,
-                lastAssistantContent: event.lastAssistantContent,
-                operationId: event.operationId,
-                reason: event.reason || 'done',
-                runTrigger: trigger,
-                taskId,
-                taskIdentifier,
-                topicId: event.topicId,
-              });
-            },
             id: 'task-on-complete',
             type: 'onComplete' as const,
-            webhook: {
-              // `runTrigger` rides in the static body so the production webhook
-              // callback (which reconstructs onTopicComplete params server-side)
-              // knows whether this was a manual run or an automation tick.
-              body: { runTrigger: trigger, taskId, taskIdentifier, userId },
-              delivery: 'qstash' as const,
-              fallback: 'none' as const,
-              url: '/api/workflows/task/on-topic-complete',
-            },
+            ...(execution === 'crossWorker'
+              ? {
+                  webhook: {
+                    // `runTrigger` rides in the static body so the production webhook
+                    // callback (which reconstructs onTopicComplete params server-side)
+                    // knows whether this was a manual run or an automation tick.
+                    body: { runTrigger: trigger, taskId, taskIdentifier, userId },
+                    delivery: 'qstash' as const,
+                    fallback: 'none' as const,
+                    url: '/api/workflows/task/on-topic-complete',
+                  },
+                }
+              : {
+                  handler: async (event: AgentHookEvent) => {
+                    await taskLifecycle.onTopicComplete({
+                      errorCode: event.errorType,
+                      errorMessage: event.errorMessage,
+                      lastAssistantContent: event.lastAssistantContent,
+                      operationId: event.operationId,
+                      reason: event.reason || 'done',
+                      runTrigger: trigger,
+                      taskId,
+                      taskIdentifier,
+                      topicId: event.topicId,
+                    });
+                  },
+                }),
           },
         ],
         ...(attachmentFileIds.length > 0 ? { fileIds: attachmentFileIds } : {}),

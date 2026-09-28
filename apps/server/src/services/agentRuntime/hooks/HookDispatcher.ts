@@ -8,8 +8,6 @@ import {
 } from '@lobechat/types';
 import debug from 'debug';
 
-import { isQueueAgentRuntimeEnabled } from '@/server/services/queue/impls';
-
 import { deliverWebhook, executeToolCallWebhook } from './httpWebhook';
 import { matchesHook } from './matcher';
 import type {
@@ -37,7 +35,17 @@ export { deliverWebhook } from './httpWebhook';
 
 /** Validate persisted configurations on every worker restore. */
 export function parseSerializedHooks(hooks: SerializedAgentHook[]): SerializedHook[] {
-  return hooks.map((hook) => serializedAgentHookSchema.parse(hook));
+  const parsed = hooks.map((hook) => serializedAgentHookSchema.parse(hook));
+  assertUniqueHookIds(parsed);
+  return parsed;
+}
+
+function assertUniqueHookIds(hooks: { id: string }[]): void {
+  const seen = new Set<string>();
+  for (const hook of hooks) {
+    if (seen.has(hook.id)) throw new Error(`Duplicate hook id: ${hook.id}`);
+    seen.add(hook.id);
+  }
 }
 
 function buildWebhookPayload(event: AnyHookEvent, eventFields?: string[]): Record<string, unknown> {
@@ -61,21 +69,31 @@ function buildWebhookPayload(event: AnyHookEvent, eventFields?: string[]): Recor
 /**
  * HookDispatcher — central hub for registering and dispatching agent lifecycle hooks
  *
- * Local mode: hooks are stored in memory, handler functions called directly
- * Production mode: webhook configs persisted in AgentState.host.hooks,
- *   delivered via HTTP POST or QStash
+ * Each hook has one explicit target: an in-process handler or a webhook.
+ * Webhooks persist in AgentState.host.hooks and can be restored by any worker.
  */
 export class HookDispatcher {
-  /** Continuations retain local callbacks when present and validated durable webhooks otherwise. */
-  getContinuationHooks(operationId: string, serializedHooks?: SerializedAgentHook[]): AgentHook[] {
-    // The schema's cross-field refinements enforce AgentHook's discriminated
-    // control/notification union; Zod's inferred object type cannot express it.
-    return (
-      this.hooks.get(operationId) ?? (parseSerializedHooks(serializedHooks ?? []) as AgentHook[])
-    );
+  /** Durable webhooks are authoritative; process callbacks are never serialized. */
+  private resolveHooks(operationId: string, serializedHooks?: SerializedAgentHook[]): AgentHook[] {
+    const registered = this.hooks.get(operationId) ?? [];
+    if (serializedHooks === undefined) return registered;
+    // Cross-field schema validation narrows the control/notification union.
+    const restored = parseSerializedHooks(serializedHooks) as AgentHook[];
+    const hooks = [...restored, ...registered.filter((hook) => hook.handler)];
+    assertUniqueHookIds(hooks);
+    return hooks;
+  }
+
+  getContinuationHooks(
+    operationId: string,
+    serializedHooks?: SerializedAgentHook[],
+    includeProcessHandlers = true,
+  ): AgentHook[] {
+    const hooks = this.resolveHooks(operationId, serializedHooks);
+    return includeProcessHandlers ? hooks : hooks.filter((hook) => hook.webhook);
   }
   /**
-   * In-memory hook store (local mode)
+   * In-memory registrations for the current process
    * Maps operationId → AgentHook[]
    */
   private hooks: Map<string, AgentHook[]> = new Map();
@@ -83,8 +101,7 @@ export class HookDispatcher {
   /**
    * Dispatch hooks for a given event type
    *
-   * In local mode: calls handler functions from memory
-   * In production mode: delivers webhooks from serialized config
+   * Calls process handlers and delivers configured webhooks, independent of scheduling.
    */
   async dispatch(
     operationId: string,
@@ -106,13 +123,7 @@ export class HookDispatcher {
     serializedHooks?: SerializedAgentHook[],
     stopAfterHandler?: () => boolean,
   ): Promise<void> {
-    const isQueueMode = isQueueAgentRuntimeEnabled();
-    const restored = serializedHooks ? parseSerializedHooks(serializedHooks) : undefined;
-
-    const registered = this.hooks.get(operationId);
-    const hooks: (AgentHook | SerializedHook)[] = isQueueMode
-      ? (restored ?? this.getSerializedHooks(operationId) ?? [])
-      : (registered ?? restored ?? []);
+    const hooks = this.resolveHooks(operationId, serializedHooks);
     let criticalError: CriticalHookDeliveryError | undefined;
     for (const hook of hooks.filter(
       (h) =>
@@ -120,8 +131,8 @@ export class HookDispatcher {
         h.webhook?.responseHandling !== 'toolCall' &&
         matchesHook(h.matcher, event),
     )) {
-      const handler = 'handler' in hook ? hook.handler : undefined;
-      const useHandler = !isQueueMode && !!handler;
+      const handler = hook.handler;
+      const useHandler = !!handler;
       // Preserve first-mock handler semantics without dropping independent HTTP callbacks.
       if (useHandler && stopAfterHandler?.()) continue;
       try {
@@ -171,10 +182,7 @@ export class HookDispatcher {
       additionalContexts: [],
       status: 'ready',
     };
-    const restored = serializedHooks ? parseSerializedHooks(serializedHooks) : undefined;
-    const hooks = isQueueAgentRuntimeEnabled()
-      ? (restored ?? this.getSerializedHooks(operationId) ?? [])
-      : (this.hooks.get(operationId) ?? restored ?? []);
+    const hooks = this.resolveHooks(operationId, serializedHooks);
     for (const hook of hooks) {
       if (signal?.aborted) return { originalArgs, status: 'cancelled' };
       if (
@@ -256,7 +264,7 @@ export class HookDispatcher {
   }
 
   /**
-   * Get serialized hooks for an operation (for production mode persistence)
+   * Get webhook configurations for durable operation state
    */
   getSerializedHooks(operationId: string): SerializedHook[] | undefined {
     const hooks = this.hooks.get(operationId);
@@ -286,9 +294,7 @@ export class HookDispatcher {
   }
 
   /**
-   * Whether dispatching `type` right now would actually reach a consumer, under
-   * the rules {@link dispatch} applies for the current runtime mode: local mode
-   * needs a handler or webhook, queue mode needs a webhook to deliver.
+   * Whether a registered handler or webhook consumes this event.
    *
    * Callers that ALSO surface the same failure themselves (the IM bot bridge
    * reports a startup failure inline) ask this before deciding whether their own
@@ -298,14 +304,13 @@ export class HookDispatcher {
   canDeliver(operationId: string, type: AgentHookType): boolean {
     const hooks = this.hooks.get(operationId)?.filter((hook) => hook.type === type) ?? [];
 
-    return isQueueAgentRuntimeEnabled() ? hooks.some((hook) => hook.webhook) : hooks.length > 0;
+    return hooks.length > 0;
   }
 
   /**
    * Register hooks for an operation
    *
-   * In local mode: stores hooks in memory (including handler functions)
-   * In production mode: caller should persist getSerializedHooks() to state.host.hooks
+   * Stores explicit targets in memory. Callers persist getSerializedHooks() to state.host.hooks.
    */
   register(operationId: string, hooks: AgentHook[]): void {
     if (hooks.length === 0) return;
@@ -323,16 +328,17 @@ export class HookDispatcher {
       if (hook.handler !== undefined && typeof hook.handler !== 'function') {
         throw new Error('Hook handler must be a function');
       }
-      if (hook.webhook) {
+      if (hook.webhook !== undefined && hook.handler !== undefined) {
+        throw new Error('A hook requires exactly one of handler or webhook');
+      }
+      if (hook.webhook !== undefined) {
         const parsed = serializedAgentHookSchema.parse({
           id: hook.id,
           matcher: hook.matcher,
           type: hook.type,
           webhook: hook.webhook,
         });
-        if (parsed.webhook.responseHandling === 'toolCall' && hook.handler)
-          throw new Error('Control hooks cannot have a handler');
-        return { ...parsed, handler: hook.handler } as AgentHook;
+        return parsed as AgentHook;
       } else if (!hook.handler) {
         throw new Error('A hook requires a handler or webhook');
       }
@@ -343,7 +349,9 @@ export class HookDispatcher {
       };
     });
     const existing = this.hooks.get(operationId) || [];
-    this.hooks.set(operationId, [...existing, ...validatedHooks]);
+    const combined = [...existing, ...validatedHooks];
+    assertUniqueHookIds(combined);
+    this.hooks.set(operationId, combined);
 
     log(
       '[%s] Registered %d hooks: %s',

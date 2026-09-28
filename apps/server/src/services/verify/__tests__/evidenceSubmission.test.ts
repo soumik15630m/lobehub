@@ -114,7 +114,7 @@ describe('startEvidenceSubmission', () => {
     expect(call.prompt).toBe(call.ephemeralUserMessage);
     expect(call.prompt.trim()).not.toBe('');
     expect(call.userInterventionConfig).toEqual({ approvalMode: 'headless' });
-    expect(call.hooks[0].webhook.body).toMatchObject({
+    expect(call.createHooks('crossWorker')[0].webhook.body).toMatchObject({
       deliverable: 'artifact summary',
       goal: 'ship model',
       parentOperationId: 'work-op',

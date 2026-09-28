@@ -6,7 +6,7 @@ import { VerifyEvidenceModel } from '@/database/models/verifyEvidence';
 import { VerifyRunModel } from '@/database/models/verifyRun';
 import type { AgentOperationItem } from '@/database/schemas/agentOperations';
 import type { LobeChatDatabase } from '@/database/type';
-import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import type { AgentHookFactory } from '@/server/services/agentRuntime/hooks/types';
 import { AiAgentService } from '@/server/services/aiAgent';
 
 const buildEvidencePrompt = (
@@ -75,35 +75,40 @@ export const startEvidenceSubmission = async (params: {
 
   const parentOperationId = operation.id;
   const evidencePrompt = buildEvidencePrompt(plan);
-  const hooks: AgentHook[] = [
+  const createHooks: AgentHookFactory = (execution) => [
     {
-      handler: async () => {
-        const { runVerifyAfterEvidenceSubmission } = await import('./lifecycle');
-        await runVerifyAfterEvidenceSubmission(
-          db,
-          userId,
-          {
-            deliverable,
-            goal,
-            operationId: parentOperationId,
-          },
-          workspaceId,
-        );
-      },
       id: 'acceptance-evidence-on-complete',
       type: 'onComplete',
-      webhook: {
-        body: {
-          deliverable,
-          goal,
-          parentOperationId,
-          userId,
-          ...(workspaceId ? { workspaceId } : {}),
-        },
-        delivery: 'qstash',
-        fallback: 'none',
-        url: '/api/workflows/verify/on-evidence-complete',
-      },
+      ...(execution === 'crossWorker'
+        ? {
+            webhook: {
+              body: {
+                deliverable,
+                goal,
+                parentOperationId,
+                userId,
+                ...(workspaceId ? { workspaceId } : {}),
+              },
+              delivery: 'qstash',
+              fallback: 'none',
+              url: '/api/workflows/verify/on-evidence-complete',
+            },
+          }
+        : {
+            handler: async () => {
+              const { runVerifyAfterEvidenceSubmission } = await import('./lifecycle');
+              await runVerifyAfterEvidenceSubmission(
+                db,
+                userId,
+                {
+                  deliverable,
+                  goal,
+                  operationId: parentOperationId,
+                },
+                workspaceId,
+              );
+            },
+          }),
     },
   ];
 
@@ -113,7 +118,7 @@ export const startEvidenceSubmission = async (params: {
     autoStart: true,
     ephemeralUserMessage: evidencePrompt,
     exclusivePluginIds: [AcceptanceEvidenceIdentifier],
-    hooks,
+    createHooks,
     parentOperationId,
     // Heterogeneous CLI adapters execute `prompt` directly, while the native
     // runtime also renders the ephemeral user message in the existing topic.

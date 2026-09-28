@@ -53,18 +53,98 @@ describe('hook registration and restoration', () => {
       expect(safeFetch).toHaveBeenCalledTimes(1);
     },
   );
-  it('retains dual handler/webhook mode selection', async () => {
-    const handler = vi.fn();
+  it('rejects dual registrations atomically', () => {
     const dispatcher = new HookDispatcher();
-    dispatcher.register('op', [{ ...hook, handler }]);
+    expect(() =>
+      dispatcher.register('op', [
+        hook,
+        { ...hook, id: 'dual', handler: vi.fn() } as unknown as AgentHook,
+      ]),
+    ).toThrow(/exactly one/);
+    expect(dispatcher.hasHooks('op')).toBe(false);
+  });
+  it.each([false, true])('executes an explicit handler independent of queue=%s', async (queue) => {
+    queueMode.mockReturnValue(queue);
+    const dispatcher = new HookDispatcher();
+    const handler = vi.fn();
+    dispatcher.register('op', [{ id: 'callback', type: 'onComplete', handler }]);
+    expect(dispatcher.canDeliver('op', 'onComplete')).toBe(true);
     await dispatcher.dispatch('op', 'onComplete', event);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(safeFetch).not.toHaveBeenCalled();
-    queueMode.mockReturnValue(true);
-    await dispatcher.dispatch('op', 'onComplete', event);
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(safeFetch).toHaveBeenCalledTimes(1);
   });
+  it.each([false, true])(
+    'uses the durable webhook snapshot alongside process callbacks queue=%s',
+    async (queue) => {
+      queueMode.mockReturnValue(queue);
+      const dispatcher = new HookDispatcher();
+      const handler = vi.fn();
+      dispatcher.register('op', [hook, { id: 'callback', type: 'onComplete', handler }]);
+      const snapshot = [
+        { ...hook, webhook: { url: 'https://example.com/durable' } },
+      ] as SerializedAgentHook[];
+      await dispatcher.dispatch('op', 'onComplete', event, snapshot);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(safeFetch).toHaveBeenCalledTimes(1);
+      expect(safeFetch.mock.calls[0][0]).toBe('https://example.com/durable');
+      expect(dispatcher.getContinuationHooks('op', snapshot)).toEqual([
+        snapshot[0],
+        { id: 'callback', type: 'onComplete', handler },
+      ]);
+    },
+  );
+  it('honors an explicitly empty durable webhook snapshot without dropping handlers', async () => {
+    const dispatcher = new HookDispatcher();
+    const handler = vi.fn();
+    dispatcher.register('op', [hook, { id: 'callback', type: 'onComplete', handler }]);
+    await dispatcher.dispatch('op', 'onComplete', event, []);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+  it('rejects conflicting callback and durable webhook ids before side effects', async () => {
+    const dispatcher = new HookDispatcher();
+    const handler = vi.fn();
+    dispatcher.register('op', [{ id: hook.id, type: 'onComplete', handler }]);
+    await expect(
+      dispatcher.dispatch('op', 'onComplete', event, [hook as SerializedAgentHook]),
+    ).rejects.toThrow(/Duplicate hook id/);
+    expect(handler).not.toHaveBeenCalled();
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+  it('restores controls from the durable list even when a worker has its own callback', async () => {
+    const dispatcher = new HookDispatcher();
+    dispatcher.register('op', [{ id: 'worker', type: 'onComplete', handler: vi.fn() }]);
+    safeFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'beforeToolCall', permissionDecision: 'deny' },
+        }),
+      ),
+    );
+    const snapshot: SerializedAgentHook[] = [
+      {
+        id: 'control',
+        type: 'beforeToolCall',
+        webhook: { url: 'https://example.com/control', responseHandling: 'toolCall' },
+      },
+    ];
+    const decision = await dispatcher.prepareToolCall(
+      'op',
+      {
+        operationId: 'op',
+        apiName: 'write',
+        identifier: 'fs',
+        args: {},
+        callIndex: 0,
+        stepIndex: 0,
+      },
+      snapshot,
+    );
+    expect(decision.status).toBe('blocked');
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    expect(dispatcher.getContinuationHooks('op', snapshot, false)).toEqual(snapshot);
+  });
+
   it('retains matcher and fallback:none through serialization', () => {
     const dispatcher = new HookDispatcher();
     const serialized = {

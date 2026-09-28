@@ -13,7 +13,7 @@ import type {
 
 import type { EvalContext } from '@/server/modules/Mecha/ContextEngineering/types';
 import type { AgentConfigWithId } from '@/server/services/agent';
-import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import type { AgentHook, AgentHookFactory } from '@/server/services/agentRuntime/hooks/types';
 import type { EvalRuntimeContext } from '@/server/services/agentRuntime/types';
 
 import type { DeviceAccessReason } from './deviceAccessPolicy';
@@ -109,6 +109,8 @@ export interface InternalExecAgentParams extends ExecAgentParams {
    * message anchors on the branch point instead of a (non-existent) spine head.
    */
   createdThreadId?: string;
+  /** Internal task producers choose targets once the actual execution path is known. */
+  createHooks?: AgentHookFactory;
   /** Cron job ID that triggered this execution (if trigger is 'cron') */
   cronJobId?: string;
   /** Disable only local-system while preserving other tools. Useful for signal-only evals. */
@@ -155,7 +157,7 @@ export interface InternalExecAgentParams extends ExecAgentParams {
   }>;
   /** Client-side function tools from Response API — injected into LLM with source='client' */
   functionTools?: Array<{ description?: string; name: string; parameters?: Record<string, any> }>;
-  /** External lifecycle hooks (auto-adapt to local/production mode) */
+  /** External lifecycle hooks, each with one explicit target. */
   hooks?: AgentHook[];
   /** Initial step count offset for resumed operations (accumulated from previous runs) */
   initialStepCount?: number;

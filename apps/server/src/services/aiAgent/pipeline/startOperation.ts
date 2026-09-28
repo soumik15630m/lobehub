@@ -156,7 +156,11 @@ export const startOperation = async (
   // If createOperation fails, we still have valid messages that need error info
   try {
     const continuationHooks = approvalSourceOperationId
-      ? hookDispatcher.getContinuationHooks(approvalSourceOperationId, sourceState?.host?.hooks)
+      ? hookDispatcher.getContinuationHooks(
+          approvalSourceOperationId,
+          sourceState?.host?.hooks,
+          deps.agentRuntimeService.supportsProcessHooks(),
+        )
       : [];
     const groups = new Map<string, NonNullable<StartOperationInput['approvalHookDecisions']>>();
     for (const decision of input.approvalHookDecisions ?? []) {

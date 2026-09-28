@@ -104,7 +104,6 @@ describe('AgentRuntimeService - Completion Hooks via createOperation', () => {
       const operationId = 'hook-op-1';
       const hooks = [
         {
-          handler: vi.fn(),
           id: 'test-completion',
           type: 'onComplete' as const,
           webhook: {
@@ -178,7 +177,6 @@ describe('AgentRuntimeService - Completion Hooks via createOperation', () => {
         autoStart: false,
         hooks: [
           {
-            handler: vi.fn(),
             id: 'test-completion',
             type: 'onComplete' as const,
             webhook: { body: webhookBody, url: webhookUrl },
@@ -273,7 +271,6 @@ describe('AgentRuntimeService - Completion Hooks via createOperation', () => {
         autoStart: false,
         hooks: [
           {
-            handler: vi.fn(),
             id: 'test-completion',
             type: 'onComplete' as const,
             webhook: { body: webhookBody, url: webhookUrl },

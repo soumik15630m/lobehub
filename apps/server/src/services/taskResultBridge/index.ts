@@ -14,7 +14,11 @@ import { TaskTopicModel } from '@/database/models/taskTopic';
 import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
-import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
+import type {
+  AgentHook,
+  AgentHookEvent,
+  AgentHookFactory,
+} from '@/server/services/agentRuntime/hooks/types';
 import type { BotCallbackBody } from '@/server/services/bot/BotCallbackService';
 import { BotCallbackService } from '@/server/services/bot/BotCallbackService';
 
@@ -216,8 +220,8 @@ export class TaskResultBridgeService {
     const topicModel = new TopicModel(this.db, this.userId, this.workspaceId);
     const topic = await topicModel.findById(originTopicId);
     const botContext = topic?.metadata?.bot as ChatTopicBotContext | undefined;
-    const hooks: AgentHook[] = [
-      this.createCreatorCompletionHook(receiptIds, agentId, originTopicId, botContext),
+    const createHooks: AgentHookFactory = (execution) => [
+      this.createCreatorCompletionHook(execution, receiptIds, agentId, originTopicId, botContext),
     ];
     const reservationId = `task-result-wakeup-${receiptIds[0]}`;
 
@@ -260,7 +264,7 @@ export class TaskResultBridgeService {
         appContext: { topicId: originTopicId },
         autoStart: true,
         botContext,
-        hooks,
+        createHooks,
         parentMessageId,
         prompt: `Process ${receipts.length} completed task result${receipts.length === 1 ? '' : 's'}`,
         suppressUserMessage: true,
@@ -291,62 +295,70 @@ export class TaskResultBridgeService {
   }
 
   private createCreatorCompletionHook(
+    execution: Parameters<AgentHookFactory>[0],
     receiptIds: string[],
     agentId: string,
     originTopicId: string,
     botContext?: ChatTopicBotContext,
   ): AgentHook {
     return {
-      handler: async (event) => {
-        if (botContext?.platformThreadId) {
-          const callbackStore = new TaskResultCallbackRedisStore(
-            this.userId,
-            originTopicId,
-            this.workspaceId,
-          );
-          const deliveredChunkCount = await callbackStore.getDeliveredChunkCount(event.operationId);
-          await new BotCallbackService(this.db).handleCallback(
-            {
-              ...event,
-              applicationId: botContext.applicationId,
-              messengerInstallationKey: botContext.messengerInstallationKey,
-              platformThreadId: botContext.platformThreadId,
-              type: 'completion',
-              userId: this.userId,
-              workspaceId: this.workspaceId,
-            } as BotCallbackBody,
-            {
-              deliveredChunkCount,
-              onChunkDelivered: (count) =>
-                callbackStore.markDeliveryChunk(event.operationId, count),
-              strictDelivery: true,
-            },
-          );
-        }
-        await this.completeCreatorWakeup({
-          agentId,
-          originTopicId,
-          receiptIds,
-        });
-      },
       id: 'task-creator-completion',
       type: 'onComplete',
-      webhook: {
-        body: {
-          agentId,
-          applicationId: botContext?.applicationId,
-          messengerInstallationKey: botContext?.messengerInstallationKey,
-          platformThreadId: botContext?.platformThreadId,
-          receiptIds,
-          originTopicId,
-          type: 'completion',
-          userId: this.userId,
-          workspaceId: this.workspaceId,
-        },
-        delivery: 'qstash',
-        fallback: 'none',
-        url: '/api/workflows/task/on-creator-complete',
-      },
+      ...(execution === 'crossWorker'
+        ? {
+            webhook: {
+              body: {
+                agentId,
+                applicationId: botContext?.applicationId,
+                messengerInstallationKey: botContext?.messengerInstallationKey,
+                platformThreadId: botContext?.platformThreadId,
+                receiptIds,
+                originTopicId,
+                type: 'completion',
+                userId: this.userId,
+                workspaceId: this.workspaceId,
+              },
+              delivery: 'qstash',
+              fallback: 'none',
+              url: '/api/workflows/task/on-creator-complete',
+            },
+          }
+        : {
+            handler: async (event: AgentHookEvent) => {
+              if (botContext?.platformThreadId) {
+                const callbackStore = new TaskResultCallbackRedisStore(
+                  this.userId,
+                  originTopicId,
+                  this.workspaceId,
+                );
+                const deliveredChunkCount = await callbackStore.getDeliveredChunkCount(
+                  event.operationId,
+                );
+                await new BotCallbackService(this.db).handleCallback(
+                  {
+                    ...event,
+                    applicationId: botContext.applicationId,
+                    messengerInstallationKey: botContext.messengerInstallationKey,
+                    platformThreadId: botContext.platformThreadId,
+                    type: 'completion',
+                    userId: this.userId,
+                    workspaceId: this.workspaceId,
+                  } as BotCallbackBody,
+                  {
+                    deliveredChunkCount,
+                    onChunkDelivered: (count) =>
+                      callbackStore.markDeliveryChunk(event.operationId, count),
+                    strictDelivery: true,
+                  },
+                );
+              }
+              await this.completeCreatorWakeup({
+                agentId,
+                originTopicId,
+                receiptIds,
+              });
+            },
+          }),
     };
   }
 }
