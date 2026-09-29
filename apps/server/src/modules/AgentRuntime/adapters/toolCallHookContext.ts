@@ -41,10 +41,7 @@ export const buildToolCallHookContext = (
     toolMessageId: context.toolMessageId,
     toolSource: context.toolSource ?? call.source,
     topicId: origin?.topicId ?? context.topicId ?? runtime.topicId,
-    userId:
-      context.state.principal?.actor?.shareVisitor?.visitorUserId ??
-      runtime.userId ??
-      origin?.userId,
+    userId: runtime.userId ?? origin?.userId,
     workspaceId: origin?.workspaceId ?? context.workspaceId ?? runtime.workspaceId,
   };
 };

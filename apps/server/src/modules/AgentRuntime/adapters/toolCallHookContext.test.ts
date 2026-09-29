@@ -48,9 +48,15 @@ describe('buildToolCallHookContext', () => {
   it.each([
     {
       originUser: 'origin-owner',
+      runtimeUser: undefined,
+      visitor: 'visitor-1',
+      user: 'origin-owner',
+    },
+    {
+      originUser: 'origin-owner',
       runtimeUser: 'runtime-owner',
       visitor: 'visitor-1',
-      user: 'visitor-1',
+      user: 'runtime-owner',
     },
     {
       originUser: 'origin-owner',
@@ -68,7 +74,7 @@ describe('buildToolCallHookContext', () => {
       originUser: undefined,
       runtimeUser: undefined,
       visitor: 'visitor-1',
-      user: 'visitor-1',
+      user: undefined,
     },
     {
       originUser: undefined,
@@ -77,7 +83,7 @@ describe('buildToolCallHookContext', () => {
       user: undefined,
     },
   ])(
-    'resolves hook userId to the session initiator $user',
+    'resolves hook userId to the runtime owner $user',
     ({ originUser, runtimeUser, visitor, user }) => {
       const context = createContext();
       context.state.origin = { userId: originUser };

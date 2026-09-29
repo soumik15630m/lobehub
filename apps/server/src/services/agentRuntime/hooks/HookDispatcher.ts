@@ -9,7 +9,6 @@ import debug from 'debug';
 
 import { isQueueAgentRuntimeEnabled } from '@/server/services/queue/impls';
 
-import type { HookDeliveryContext } from './deliveryContext';
 import { deliverWebhook } from './httpWebhook';
 import { matchesHook } from './matcher';
 import type {
@@ -83,8 +82,6 @@ export class HookDispatcher {
      * runtime-precise {@link SerializedHook} once the type / webhook are checked.
      */
     serializedHooks?: SerializedAgentHook[],
-    /** Trusted runtime owner for this call; not persisted with hook configuration. */
-    deliveryContext?: HookDeliveryContext,
   ): Promise<void> {
     const isQueueMode = isQueueAgentRuntimeEnabled();
     const restored = serializedHooks ? parseSerializedHooks(serializedHooks) : undefined;
@@ -101,12 +98,10 @@ export class HookDispatcher {
         if (useHandler) {
           await handler(event as AgentHookEvent);
         } else if (hook.webhook) {
-          const payload = await this.buildWebhookPayload(
-            event,
-            hook.webhook,
-            { hookId: hook.id, hookType: type },
-            { deliveryContext },
-          );
+          const payload = await this.buildWebhookPayload(event, hook.webhook, {
+            hookId: hook.id,
+            hookType: type,
+          });
           if (payload) await deliverWebhook(hook.webhook, payload);
         }
       } catch (error) {

@@ -3,7 +3,6 @@ import type { AgentHookType } from '@lobechat/agent-runtime';
 import { UserModel } from '@/database/models/user';
 import { getServerDB } from '@/database/server';
 
-import type { HookDeliveryContext } from './deliveryContext';
 import type { AgentHookWebhook, AgentHookWebhookPayload } from './types';
 
 const EMAIL_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -64,7 +63,7 @@ export const createWebhookPayloadBuilder = () => {
     event: T,
     webhook: Pick<AgentHookWebhook, 'body' | 'eventFields'>,
     metadata: { hookId: string; hookType: AgentHookType },
-    options: { deliveryContext?: HookDeliveryContext; signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal } = {},
   ): Promise<AgentHookWebhookPayload | undefined> => {
     const { signal } = options;
     if (signal?.aborted) return undefined;
@@ -77,14 +76,12 @@ export const createWebhookPayloadBuilder = () => {
     }
     const payload: AgentHookWebhookPayload = { ...selected, ...metadata, ...body };
     delete payload.finalState;
-    // Authorize against this call's server context before reading even a cached email.
     delete payload.userEmail;
     const userId = 'userId' in payload ? payload.userId : event.userId;
     if (
       (!eventFields || eventFields.includes('userEmail')) &&
       typeof userId === 'string' &&
-      userId &&
-      (userId === event.userId || userId === options.deliveryContext?.ownerUserId)
+      userId
     ) {
       const email = await waitForEmail(resolveEmail(userId), signal);
       if (signal?.aborted) return undefined;

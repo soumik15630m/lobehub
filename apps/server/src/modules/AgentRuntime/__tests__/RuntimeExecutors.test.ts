@@ -6023,7 +6023,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
 
     describe('call_tool hooks', () => {
       it.each([false, true])(
-        'preserves share visitor identity in tool hooks (throws: %s)',
+        'keeps runtime owner identity in shared-session tool hooks (throws: %s)',
         async (throws) => {
           const mockDispatcher = {
             dispatch: vi.fn().mockResolvedValue(undefined),
@@ -6051,7 +6051,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             expect.objectContaining({ userId: 'user-123' }),
           );
           expect(ctx.userId).toBe('user-123');
-          const identity = expect.objectContaining({ userId: 'visitor-1' });
+          const identity = expect.objectContaining({ userId: 'user-123' });
           expect(mockDispatcher.dispatchBeforeToolCall).toHaveBeenCalledWith('op-123', identity);
           expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
             'op-123',
