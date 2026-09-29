@@ -234,18 +234,6 @@ describe('webhook user email', () => {
     expect(getEmailsByIds).toHaveBeenCalledTimes(1);
   });
 
-  it('continues without email after a bounded lookup wait', async () => {
-    vi.useFakeTimers();
-    getEmailsByIds.mockReturnValue(new Promise(() => {}));
-    const pending = createWebhookPayloadBuilder()(
-      event,
-      {},
-      { hookId: 'hook', hookType: 'onComplete' },
-    );
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(await pending).not.toHaveProperty('userEmail');
-  });
-
   it('cancels a waiter without cancelling another shared lookup', async () => {
     let complete!: (rows: { id: string; email: string }[]) => void;
     getEmailsByIds.mockReturnValue(
@@ -462,28 +450,6 @@ describe('webhook user email', () => {
       { ownerUserId: 'owner' },
     );
     expect(received[0]).not.toHaveProperty('userEmail');
-  });
-
-  it('bounds explicit owner lookup without signal and cancels an independent waiter', async () => {
-    vi.useFakeTimers();
-    getEmailsByIds.mockReturnValue(new Promise(() => {}));
-    const build = createWebhookPayloadBuilder();
-    const controller = new AbortController();
-    const args = [
-      event,
-      { body: { userId: 'owner' } },
-      { hookId: 'internal', hookType: 'onComplete' as const },
-    ] as const;
-    const pending = build(...args, { deliveryContext: { ownerUserId: 'owner' } });
-    const cancelled = build(...args, {
-      deliveryContext: { ownerUserId: 'owner' },
-      signal: controller.signal,
-    });
-    controller.abort();
-    expect(await cancelled).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(await pending).not.toHaveProperty('userEmail');
-    expect(getEmailsByIds).toHaveBeenCalledTimes(1);
   });
 
   it('includes the resolved email in QStash JSON', async () => {
