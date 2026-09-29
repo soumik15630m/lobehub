@@ -136,6 +136,7 @@ describe('sub-agent call notifications', () => {
           type,
           expect.objectContaining({ userId: 'user' }),
           parent.host.hooks,
+          { ownerUserId: 'user' },
         );
       }
       expect(deps.userId).toBe('user');

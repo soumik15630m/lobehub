@@ -6159,12 +6159,14 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             'op-123',
             identity,
             undefined,
+            { ownerUserId: 'user-123' },
           );
           expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
             'op-123',
             throws ? 'onToolCallError' : 'afterToolCall',
             identity,
             undefined,
+            { ownerUserId: 'user-123' },
           );
         },
       );
@@ -6237,6 +6239,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           'op-123',
           expect.objectContaining(identity),
           undefined,
+          { ownerUserId: 'user-123' },
         );
         expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
           'op-123',
@@ -6250,6 +6253,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             success: true,
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6285,6 +6289,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             toolCallId: 'tc-1',
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
         expect(
           mockDispatcher.dispatch.mock.calls.some(([, type]) => type === 'onToolCallError'),
@@ -6379,6 +6384,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             toolSource: 'mcp',
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6405,6 +6411,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             identifier: 'twitter',
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
 
         // afterToolCall dispatched via dispatch()
@@ -6418,6 +6425,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             success: true,
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6521,6 +6529,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           'afterToolCall',
           expect.objectContaining({ mocked: true, success: true }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
 
         // Tool message should be persisted with mock content
@@ -6569,6 +6578,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             toolCallId: 'tc-1',
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6601,6 +6611,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
             toolCallId: 'tc-1',
           }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6625,6 +6636,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           'op-123',
           expect.objectContaining({ callIndex: 1 }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
 
         // Second call: state reflects 1 prior call → callIndex = 2
@@ -6644,6 +6656,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           'op-123',
           expect.objectContaining({ callIndex: 2 }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
 
@@ -6694,6 +6707,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
           'beforeCompact',
           expect.objectContaining({ tokenCount: 5000 }),
           undefined,
+          { ownerUserId: 'user-123' },
         );
       });
     });
@@ -6780,6 +6794,7 @@ describe('RuntimeExecutors', { timeout: 60_000 }, () => {
               ],
             }),
             state.host?.hooks,
+            ownerUserId === undefined ? undefined : { ownerUserId },
           );
           await dispatch.mock.results[0].value;
           const payloads = humanHookFetch.mock.calls.map(([, request]) => JSON.parse(request.body));

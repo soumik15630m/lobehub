@@ -97,7 +97,7 @@ const createFixture = (delivery: 'fetch' | 'qstash', ownerCallback = false) => {
   const stream = vi.fn().mockResolvedValue({ content: 'actual summary' });
   const rollbackGroup = vi.fn().mockResolvedValue(undefined);
   const host: AgentRuntimeHost = {
-    lifecycle: new ServerLifecycleSink(resumedWorker, 'operation'),
+    lifecycle: new ServerLifecycleSink(resumedWorker, 'operation', 'user'),
     operation: { operationId: 'operation', stepIndex: 2, userId: 'user' },
     transports: {
       compression: {
@@ -179,6 +179,7 @@ describe('compact notifications through the server lifecycle and F HTTP dispatch
           type,
           expect.objectContaining({ userId: 'user' }),
           fixture.state.host?.hooks,
+          { ownerUserId: 'user' },
         );
       }
       expect(fixture.host.operation.userId).toBe('user');
@@ -203,6 +204,7 @@ describe('compact notifications through the server lifecycle and F HTTP dispatch
       'onCompactError',
       expect.objectContaining({ userId: 'user' }),
       fixture.state.host?.hooks,
+      { ownerUserId: 'user' },
     );
     expect(bodies[1]).toMatchObject({
       userId: 'user',

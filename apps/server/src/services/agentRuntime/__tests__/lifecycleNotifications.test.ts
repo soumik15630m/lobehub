@@ -228,6 +228,7 @@ describe('lifecycle notifications from executeStep', () => {
           type,
           expect.objectContaining({ userId: 'user-1' }),
           expect.any(Array),
+          { ownerUserId: 'user-1' },
         );
       }
       expect(writes.length).toBeGreaterThan(0);
@@ -265,6 +266,7 @@ describe('lifecycle notifications from executeStep', () => {
           type,
           expect.objectContaining({ userId: ownerUserId }),
           expect.any(Array),
+          { ownerUserId },
         );
       }
     }
