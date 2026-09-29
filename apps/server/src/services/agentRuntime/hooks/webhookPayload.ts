@@ -20,18 +20,17 @@ const readUserEmail = async (userId: string): Promise<string | undefined> => {
   }
 };
 
-/** Bound optional enrichment and allow each waiter to cancel independently. */
+/** Allow each waiter to cancel independently; query timeouts belong to the database. */
 const waitForEmail = (value: Promise<string | undefined>, signal?: AbortSignal) => {
   if (signal?.aborted) return Promise.resolve(undefined);
+  if (!signal) return value;
   return new Promise<string | undefined>((resolve) => {
     const finish = (email?: string) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
+      signal.removeEventListener('abort', onAbort);
       resolve(email);
     };
     const onAbort = () => finish();
-    const timer = setTimeout(finish, 1000);
-    signal?.addEventListener('abort', onAbort, { once: true });
+    signal.addEventListener('abort', onAbort, { once: true });
     void value.then(finish);
   });
 };
@@ -52,7 +51,7 @@ const createCachedLookup = (read: (key: string) => Promise<string | undefined>) 
       const oldest = entries.keys().next().value;
       if (oldest !== undefined) entries.delete(oldest);
     }
-    const value = waitForEmail(read(key));
+    const value = read(key);
     entries.set(key, { expiresAt: now + EMAIL_CACHE_TTL_MS, value });
     return value;
   };
