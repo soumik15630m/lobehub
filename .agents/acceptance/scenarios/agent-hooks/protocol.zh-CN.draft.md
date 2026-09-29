@@ -1,6 +1,6 @@
 # Agent Runtime HTTP Hook — 未发布集成草稿
 
-本稿对应集成基线 `6b492211582e19df5cebca45e41ab09fd24df576`（C2 + S + K + L），不是发布文档。当前实现已接入 allow/deny、完整参数替换与额外上下文，临时控制限制已移除。
+本稿对应集成基线 `c1a8e81f7449f03b5987aeb7fbbd70a5bf49e5cc`（C2 + S + K + L），不是发布文档。当前实现已接入 allow/deny、完整参数替换与额外上下文，临时控制限制已移除。
 
 已记录限定范围的真实 HTTP、设备、Web 重新审批和 Cloud source API 证据。有效参数卡片投影及缺源恢复已修复，当前集成已观察到 source Stop critical 重试成功。完整 token / 部分及混合审批 UI、成功模型推理和托管 QStash 投递仍未验通；取消工具仍错误显示 Edited 汇总。本稿未发布，描述实现契约，不代表完整产品验收通过。
 
@@ -81,7 +81,7 @@ HTTP 已送达但 checkpoint 尚未保存时崩溃，可重复投递；checkpoin
 
 请求为 JSON POST，携带事件及 `hookId`、`hookType`。工具事件保留 `identifier`、`apiName`、`args`，集成后的生产者还提供原生 `toolCallId`、执行来源 / 目标及可用运行关联。可选关联取决于真实 origin，不猜测父 ID。通知兼容已有 `eventFields`/`body`，控制请求禁止裁剪和覆盖载荷。远端不发送 `finalState`。控制请求另带不可变 `originalArgs` 快照；普通工具通知不再发送该字段，其 `args` 为有效参数。
 
-`userEmail` 仅在 HTTP 出口按需补充，在通知投影和静态 body 合成后处理。只有最终 userId 匹配事件触发者或本次投递的可信运行 owner，才读取该用户的数据库邮箱。body 不能授权第三方身份或注入邮箱，缓存已预热也不例外。使用 eventFields 时须包含 userEmail 才会补充；若投影不含 userId，则按事件触发者查邮箱，但不会凭空添加 userId。邮箱缺失、查询失败或超过等待上限时省略邮箱，不因此吞通知。每个 dispatcher 缓存最多 1000 项、五分钟；查询等待上限一秒。控制请求沿用同一补充出口及取消信号，禁止 body / 投影覆盖。
+`userEmail` 仅在 HTTP 出口按需补充，在通知投影和静态 body 合成后处理。只有最终 userId 匹配事件触发者或本次投递的可信运行 owner，才读取该用户的数据库邮箱。body 不能授权第三方身份或注入邮箱，缓存已预热也不例外。使用 eventFields 时须包含 userEmail 才会补充；若投影不含 userId，则按事件触发者查邮箱，但不会凭空添加 userId。邮箱缺失或查询失败时省略邮箱，不因此吞通知。查询超时由数据库层负责，Hook 层不设置邮箱查询计时器或一秒截止时间。每个 dispatcher 缓存最多 1000 个查询 Promise、五分钟；各等待者保留独立的 AbortSignal 取消。控制请求沿用同一补充出口及取消信号，禁止 body / 投影覆盖。
 
 独立 L 身份 /owner 候选 c942（D 验收 f5ad）由真实 producer 传入可信 owner，外发事件 userId 优先可信 visitorUserId，否则为运行 owner。不新增 actorUserId 或公开 owner 字段，执行、权限与数据库 owner 不变。该 producer 后续尚未合入上述原栈 target；r28 仅覆盖程序化分享入口实际发出的六类事件，不代表全部 16 类或公开分享 UI。静态内部 callback 的 owner 身份与 visitor 分开保留。
 
