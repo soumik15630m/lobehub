@@ -85,20 +85,6 @@ describe('control webhook payload enrichment', () => {
     },
   );
 
-  it.each(['continue', 'block'] as const)(
-    'bounds email waiting to one second without changing onError=%s',
-    async (policy) => {
-      vi.useFakeTimers();
-      getEmailsByIds.mockImplementation(() => new Promise(() => {}));
-      const pending = setup(policy).prepareToolCall('op', event);
-      await vi.waitFor(() => expect(getEmailsByIds).toHaveBeenCalledTimes(1));
-      expect(fetchHook).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(await pending).toMatchObject({ status: 'ready' });
-      expect(JSON.parse(fetchHook.mock.calls[0][1].body)).not.toHaveProperty('userEmail');
-    },
-  );
-
   it('does not look up email or send HTTP after prior cancellation', async () => {
     const abort = new AbortController();
     abort.abort();

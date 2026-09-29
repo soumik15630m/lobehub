@@ -46,8 +46,8 @@ Critical notification callbacks retain `fallback: 'none'` failure propagation.
 Controls use the same per-dispatcher `createWebhookPayloadBuilder` as notifications,
 with empty body/projection settings and fourth argument `{ signal }`. Only the
 trusted event user authorizes an email lookup; supplied email is discarded.
-Email lookup waits at most one second. Missing data, lookup failure or timeout
-omits email and leaves control policy unchanged. Cancellation returns `cancelled`
+Email query timeouts belong to the database; the Hook layer adds no timer. Missing
+data or lookup failure omits email and leaves control policy unchanged. Cancellation returns `cancelled`
 without sending HTTP; a cancelled waiter does not cancel an independent sibling.
 The shared cache is temporary and worker-local, not a persisted identity snapshot.
 
