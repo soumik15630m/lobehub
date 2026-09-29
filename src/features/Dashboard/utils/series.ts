@@ -75,3 +75,16 @@ export const buildSeriesChartData = (
 
   return { categories: series.map((item) => item.name), fromHistory, rows };
 };
+
+/**
+ * Points of a stat's sparkline in a `width` × `height` box (2px inset). A flat
+ * history sits mid-height so it reads as a steady trend, not as the box edge.
+ */
+export const sparklinePoints = (values: number[], width: number, height: number) => {
+  const min = Math.min(...values);
+  const span = Math.max(...values) - min;
+  const x = (index: number) => (values.length > 1 ? (index / (values.length - 1)) * width : 0);
+  const y = (value: number) =>
+    span === 0 ? height / 2 : height - 2 - ((value - min) / span) * (height - 4);
+  return values.map((value, index) => ({ x: x(index), y: y(value) }));
+};
