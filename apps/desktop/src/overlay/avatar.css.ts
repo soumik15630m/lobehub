@@ -25,5 +25,4 @@ export const textBox = style({
   color: 'var(--lobe-overlay-text-secondary, rgba(0, 0, 0, 0.65))',
   fontSize: 11,
   fontWeight: 600,
-  textTransform: 'uppercase',
 });
