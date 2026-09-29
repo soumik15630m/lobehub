@@ -1656,6 +1656,7 @@ describe('AiAgentService.stopPendingApproval', () => {
         'onStopByHumanIntervention',
         expect.objectContaining({ userId: 'user-1' }),
         expect.any(Array),
+        { ownerUserId: 'user-1' },
       );
       dispatch.mockRestore();
       const delivered = hookFetch.mock.calls.length;
