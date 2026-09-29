@@ -3,21 +3,17 @@
 import { cssVar } from 'antd-style';
 import { memo } from 'react';
 
+import { sparklinePoints } from '../../utils/series';
+
 const HEIGHT = 28;
+const WIDTH = 100;
 
 /** Shape-only trend line under a stat: no axes, the number above carries the value. */
 const TrendSparkline = memo<{ values: number[] }>(({ values }) => {
   if (values.length < 2) return null;
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(1e-9, max - min);
-  const width = 100;
-  const sx = (index: number) => (index / (values.length - 1)) * width;
-  const sy = (value: number) => HEIGHT - 2 - ((value - min) / span) * (HEIGHT - 4);
-  const d = values
-    .map((value, index) => `${index === 0 ? 'M' : 'L'} ${sx(index)} ${sy(value)}`)
-    .join(' ');
+  const points = sparklinePoints(values, WIDTH, HEIGHT);
+  const d = points.map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ');
 
   return (
     <svg
@@ -25,7 +21,7 @@ const TrendSparkline = memo<{ values: number[] }>(({ values }) => {
       data-widget-sparkline
       height={HEIGHT}
       preserveAspectRatio={'none'}
-      viewBox={`0 0 ${width} ${HEIGHT}`}
+      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       width={'100%'}
     >
       <path
@@ -35,6 +31,16 @@ const TrendSparkline = memo<{ values: number[] }>(({ values }) => {
         strokeWidth={1.5}
         vectorEffect={'non-scaling-stroke'}
       />
+      {points.map(({ x, y }, index) => (
+        <path
+          d={`M ${x} ${y} l 0.0001 0`}
+          key={index}
+          stroke={cssVar.colorPrimary}
+          strokeLinecap={'round'}
+          strokeWidth={4}
+          vectorEffect={'non-scaling-stroke'}
+        />
+      ))}
     </svg>
   );
 });

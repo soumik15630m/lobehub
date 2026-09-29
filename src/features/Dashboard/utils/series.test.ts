@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSeriesChartData } from './series';
+import { buildSeriesChartData, sparklinePoints } from './series';
 
 describe('buildSeriesChartData', () => {
   it('prefers the metric_points history over the latest sliding window', () => {
@@ -65,5 +65,18 @@ describe('buildSeriesChartData', () => {
     expect(data.rows).toHaveLength(2);
     expect(data.rows[0]).not.toHaveProperty('a');
     expect(data.rows[1]).toMatchObject({ a: 2, b: 3 });
+  });
+});
+
+describe('sparklinePoints', () => {
+  it('spreads a changing history across the box', () => {
+    expect(sparklinePoints([1, 3], 100, 28)).toEqual([
+      { x: 0, y: 26 },
+      { x: 100, y: 2 },
+    ]);
+  });
+
+  it('draws a flat history mid-height instead of on the bottom edge', () => {
+    expect(sparklinePoints([12, 12, 12], 100, 28).map(({ y }) => y)).toEqual([14, 14, 14]);
   });
 });
