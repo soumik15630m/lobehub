@@ -6,6 +6,7 @@ import type {
 import type { DashboardToolService } from '@lobechat/builtin-tool-dashboard/executionRuntime';
 import type { LobeChatDatabase } from '@lobechat/database';
 import { and, eq } from 'drizzle-orm';
+import pMap from 'p-map';
 import { z } from 'zod';
 
 import { DashboardModel } from '@/database/models/dashboard';
@@ -147,15 +148,17 @@ export const createDashboardToolService = (
 
     listDashboards: async () => {
       const boards = await dashboards.list({});
-      return Promise.all(
-        boards.map(async (board) => ({
+      return pMap(
+        boards,
+        async (board) => ({
           id: board.id,
           title: board.title,
           widgets: (await dashboards.listItems(board.id)).map(({ widget }) => ({
             id: widget.id,
             title: widget.title,
           })),
-        })),
+        }),
+        { concurrency: 5 },
       );
     },
 
