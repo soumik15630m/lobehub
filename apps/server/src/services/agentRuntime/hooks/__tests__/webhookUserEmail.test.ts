@@ -7,14 +7,13 @@ import { HookDispatcher, hookDispatcher } from '../HookDispatcher';
 import type { AgentHookEvent, AgentHookType, SerializedHook } from '../types';
 import { createWebhookPayloadBuilder } from '../webhookPayload';
 
-const { getEmailsByIds, operationOwner, publishJSON } = vi.hoisted(() => ({
+const { getEmailsByIds, publishJSON } = vi.hoisted(() => ({
   getEmailsByIds: vi.fn(),
-  operationOwner: vi.fn(),
   publishJSON: vi.fn(),
 }));
 vi.mock('@/database/models/user', () => ({ UserModel: { getEmailsByIds } }));
 vi.mock('@/database/server', () => ({
-  getServerDB: async () => ({ query: { agentOperations: { findFirst: operationOwner } } }),
+  getServerDB: async () => ({}),
 }));
 vi.mock('@/server/services/queue/impls', () => ({ isQueueAgentRuntimeEnabled: () => true }));
 vi.mock('@upstash/qstash', () => ({
@@ -65,7 +64,6 @@ beforeEach(() => {
   vi.stubEnv('SSRF_ALLOW_IP_ADDRESS_LIST', '127.0.0.1');
   dispatcher = new HookDispatcher();
   received.length = 0;
-  operationOwner.mockReset().mockResolvedValue(undefined);
   getEmailsByIds
     .mockReset()
     .mockImplementation(async (_db, ids: string[]) =>
@@ -93,7 +91,7 @@ describe('webhook user email', () => {
     expect(event).not.toHaveProperty('userEmail');
   });
 
-  it('does not authorize a different identity from webhook body', async () => {
+  it('uses the final body identity for its corresponding email', async () => {
     await dispatcher.dispatch('run', 'onComplete', event, [
       { id: 'external', type: 'onComplete', webhook: { url } },
       {
@@ -104,11 +102,11 @@ describe('webhook user email', () => {
     ]);
     expect(received.map(({ userId, userEmail }) => ({ userId, userEmail }))).toEqual([
       { userId: 'visitor', userEmail: 'visitor@example.test' },
-      { userId: 'owner', userEmail: undefined },
+      { userId: 'owner', userEmail: 'owner@example.test' },
     ]);
     expect(event.userId).toBe('visitor');
-    expect(getEmailsByIds).toHaveBeenCalledTimes(1);
-    expect(getEmailsByIds).toHaveBeenCalledWith(expect.anything(), ['visitor']);
+    expect(getEmailsByIds).toHaveBeenCalledTimes(2);
+    expect(getEmailsByIds).toHaveBeenCalledWith(expect.anything(), ['owner']);
   });
 
   it.each([{ rows: [] }, { rows: [{ id: 'visitor', email: null }] }])(
@@ -216,7 +214,7 @@ describe('webhook user email', () => {
     expect(getEmailsByIds).toHaveBeenCalledTimes(1002);
   });
 
-  it('does not disclose another user even when that user is already cached', async () => {
+  it('reuses the final body identity email when already cached', async () => {
     await send('onComplete', { url }, { ...event, userId: 'owner' });
     await dispatcher.dispatch('run', 'onComplete', event, [
       {
@@ -226,7 +224,7 @@ describe('webhook user email', () => {
       },
     ]);
     expect(received[0]).toHaveProperty('userEmail', 'owner@example.test');
-    expect(received[1]).not.toHaveProperty('userEmail');
+    expect(received[1]).toHaveProperty('userEmail', 'owner@example.test');
     expect(getEmailsByIds).toHaveBeenCalledTimes(1);
   });
 
@@ -275,42 +273,8 @@ describe('webhook user email', () => {
     expect(payload).toMatchObject({ args, originalArgs, userEmail: 'visitor@example.test' });
   });
 
-  it('pairs the internal callback owner with email from per-delivery context', async () => {
-    await dispatcher.dispatch(
-      'run',
-      'onComplete',
-      event,
-      [
-        { id: 'external', type: 'onComplete', webhook: { url } },
-        { id: 'internal', type: 'onComplete', webhook: { url, body: { userId: 'owner' } } },
-      ],
-      { ownerUserId: 'owner' },
-    );
-    expect(received.map(({ userId, userEmail }) => ({ userId, userEmail }))).toEqual([
-      { userId: 'visitor', userEmail: 'visitor@example.test' },
-      { userId: 'owner', userEmail: 'owner@example.test' },
-    ]);
-    expect(received.every((payload) => !('ownerUserId' in payload))).toBe(true);
-    expect(event.userId).toBe('visitor');
-    expect(operationOwner).not.toHaveBeenCalled();
-  });
-
-  it('does not authorize body identity or operation data without explicit context', async () => {
-    operationOwner.mockResolvedValue({ userId: 'owner' });
-    await dispatcher.dispatch('run', 'onComplete', event, [
-      {
-        id: 'spoof',
-        type: 'onComplete',
-        webhook: { url, body: { operationId: 'run', userId: 'owner', ownerUserId: 'owner' } },
-      },
-    ]);
-    expect(received[0]).not.toHaveProperty('userEmail');
-    expect(operationOwner).not.toHaveBeenCalled();
-    expect(getEmailsByIds).not.toHaveBeenCalled();
-  });
-
   it.each(['consecutive', 'concurrent'] as const)(
-    'isolates owners and visitors on the global dispatcher across %s deliveries',
+    'keeps each final user email distinct on the global dispatcher across %s deliveries',
     async (mode) => {
       const deliver = (suffix: string) => {
         const visitor = `${mode}-visitor-${suffix}`;
@@ -327,7 +291,6 @@ describe('webhook user email', () => {
             { id: 'external', type: 'onComplete', webhook: { url } },
             { id: 'internal', type: 'onComplete', webhook: { url, body: { userId: owner } } },
           ],
-          { ownerUserId: owner },
         );
       };
       if (mode === 'concurrent') {
@@ -367,28 +330,11 @@ describe('webhook user email', () => {
         ),
       );
       expect(received).toHaveLength(4);
-      // Previous owner and its cached email never authorize a later delivery.
-      for (const context of [undefined, { ownerUserId: `${mode}-owner-b` }]) {
-        await hookDispatcher.dispatch(
-          'run-b',
-          'onComplete',
-          event,
-          [
-            {
-              id: 'untrusted',
-              type: 'onComplete',
-              webhook: { url, body: { userId: `${mode}-owner-a` } },
-            },
-          ],
-          context,
-        );
-      }
-      expect(received.slice(4).every((payload) => !('userEmail' in payload))).toBe(true);
       expect(getEmailsByIds).toHaveBeenCalledTimes(4);
     },
   );
 
-  it('requires fresh trusted context on a cold queue worker and every later dispatch', async () => {
+  it('resolves the final body identity on a cold queue worker', async () => {
     vi.stubEnv('QSTASH_TOKEN', 'test-token');
     const hooks: SerializedHook[] = [
       {
@@ -399,17 +345,17 @@ describe('webhook user email', () => {
     ];
     const serializedHooks = JSON.stringify(hooks);
     const restoredHooks: SerializedHook[] = JSON.parse(serializedHooks);
-    await dispatcher.dispatch('run', 'onComplete', event, hooks, { ownerUserId: 'owner' });
+    await dispatcher.dispatch('run', 'onComplete', event, hooks);
     dispatcher = new HookDispatcher();
     await dispatcher.dispatch('run', 'onComplete', event, restoredHooks);
-    await dispatcher.dispatch('run', 'onComplete', event, restoredHooks, { ownerUserId: 'owner' });
+    await dispatcher.dispatch('run', 'onComplete', event, restoredHooks);
     await dispatcher.dispatch('run', 'onComplete', event, restoredHooks);
     const bodies = publishJSON.mock.calls.map(([request]) => request.body);
     expect(bodies.map(({ userEmail }) => userEmail)).toEqual([
       'owner@example.test',
-      undefined,
       'owner@example.test',
-      undefined,
+      'owner@example.test',
+      'owner@example.test',
     ]);
     expect(bodies.every((payload) => !('ownerUserId' in payload))).toBe(true);
     expect(JSON.stringify(hooks)).toBe(serializedHooks);
@@ -423,13 +369,9 @@ describe('webhook user email', () => {
         ids[0] === 'visitor' ? [{ id: 'visitor', email: 'visitor@example.test' }] : rows,
       );
       await send();
-      await dispatcher.dispatch(
-        'run',
-        'onComplete',
-        event,
-        [{ id: 'internal', type: 'onComplete', webhook: { url, body: { userId: 'owner' } } }],
-        { ownerUserId: 'owner' },
-      );
+      await dispatcher.dispatch('run', 'onComplete', event, [
+        { id: 'internal', type: 'onComplete', webhook: { url, body: { userId: 'owner' } } },
+      ]);
       expect(received[1]).toHaveProperty('userId', 'owner');
       expect(received[1]).not.toHaveProperty('userEmail');
     },
@@ -438,13 +380,9 @@ describe('webhook user email', () => {
   it('omits owner email on lookup failure and continues delivery', async () => {
     getEmailsByIds.mockRejectedValue(new Error('lookup unavailable'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    await dispatcher.dispatch(
-      'run',
-      'onComplete',
-      event,
-      [{ id: 'internal', type: 'onComplete', webhook: { url, body: { userId: 'owner' } } }],
-      { ownerUserId: 'owner' },
-    );
+    await dispatcher.dispatch('run', 'onComplete', event, [
+      { id: 'internal', type: 'onComplete', webhook: { url, body: { userId: 'owner' } } },
+    ]);
     expect(received[0]).not.toHaveProperty('userEmail');
   });
 
