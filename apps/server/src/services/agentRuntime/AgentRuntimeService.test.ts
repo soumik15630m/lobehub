@@ -1774,8 +1774,10 @@ describe('AgentRuntimeService', () => {
             expect(await mockCoordinator.isInterrupted(params.operationId)).toBe(true);
             expect(signal?.aborted).toBe(false); // first 2s poll has not fired
           }
-          if (!emailWait) release();
-          await vi.advanceTimersByTimeAsync(1000);
+          // Release the real boundary after Stop/read-failure is visible. Email
+          // completion is controlled by its query, not a Hook-layer deadline.
+          release();
+          await vi.advanceTimersByTimeAsync(0);
           const outcome = await pending;
           if (boundary === 'read-failure' || boundary === 'launch-read-failure') {
             expect(outcome.error).toBeInstanceOf(Error);

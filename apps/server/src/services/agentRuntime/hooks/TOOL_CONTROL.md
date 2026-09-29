@@ -57,8 +57,10 @@ hook's effective arguments have been selected. Empty body/projection settings
 preserve the authoritative event. The control snapshot is cloned from
 `context.originalArgs ?? context.parsedArgs`; recovered original input cannot be
 replaced by already rewritten arguments. Email enrichment follows the inherited
-trusted-identity policy and one-second limit. Missing or failed enrichment omits
-email; an aborted wait returns `cancelled` and sends no control HTTP request.
+trusted-identity policy. Query timeouts belong to the database; the Hook layer
+adds no timer. Missing or failed enrichment omits email; an aborted wait returns
+`cancelled` and sends no control HTTP request. Cancelling one waiter does not
+cancel an independent sibling or the shared database query.
 
 Notification callers may supply server-only `HookDeliveryContext { ownerUserId }`
 per delivery: the fifth argument of `dispatch` or the fourth argument of
@@ -256,7 +258,7 @@ product acceptance has completed; keep the integration PR draft until D reports.
 
 `createRuntimeToolPreparation` checks before and after preparation, including cached preparation and durable approval reads. `ServerToolTransport.prepare` checks before controls and passes a fifth callback to `HookDispatcher.prepareToolCall`; its fourth argument remains the AbortSignal. The dispatcher checks each matching control before enrichment, after the asynchronous payload builder and after its HTTP response, before applying a decision or proceeding to another control. A visible stop returns cancelled independently of onError; late allow cannot authorize the next control or tool.
 
-The transport also checks before using a ready preparation, after beforeToolCall observation/mock dispatch, and immediately before gateway dispatch or the first server/device tool attempt after async visibility lookup. Internal retry decisions use the same authority when available, without rerunning preparation. The server approval executor checks again after asynchronous permission classification and routes a visible stop through the existing aborted-tool row settlement, without creating pending approvals. Standalone adapters without a persisted-operation callback keep their AbortSignal behavior and existing retry fallback. Generic dispatch fifth owner context, dedicated before fourth context, private dispatch fifth mock callback/sixth owner context, email timeout/cache and terminal/critical notification delivery are unchanged.
+The transport also checks before using a ready preparation, after beforeToolCall observation/mock dispatch, and immediately before gateway dispatch or the first server/device tool attempt after async visibility lookup. Internal retry decisions use the same authority when available, without rerunning preparation. The server approval executor checks again after asynchronous permission classification and routes a visible stop through the existing aborted-tool row settlement, without creating pending approvals. Standalone adapters without a persisted-operation callback keep their AbortSignal behavior and existing retry fallback. Generic dispatch fifth owner context, dedicated before fourth context, private dispatch fifth mock callback/sixth owner context, email authorization/cache and terminal/critical notification delivery are unchanged. Email query timeouts are owned by the database, with no Hook-layer timer.
 
 Cancellation-read errors fail closed with an explicit `Unable to verify operation cancellation` error (no raw storage error). The failure is retained for the rest of this step, including concurrent checks, and rethrown at the service boundary even if a tool executor treated it as an ordinary tool error. It cannot be interpreted as not interrupted, converted to allow by onError:continue, or schedule the next step. It is an execution error, not a claim that a user stop was observed.
 
