@@ -24,9 +24,6 @@ export const TRASH_RESOURCE_TYPES = [
 ] as const;
 export type TrashResourceType = (typeof TRASH_RESOURCE_TYPES)[number];
 
-/** Days a trashed root stays restorable before the purge sweep may remove it. */
-export const TRASH_RETENTION_DAYS = 30;
-
 /**
  * Lightweight, denormalised snapshot captured at trash time so the recycle
  * bin list can render a row without joining the source table. Kept small on

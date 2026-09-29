@@ -1,11 +1,9 @@
+import { TRASH_RETENTION_MS } from '@lobechat/const';
 import type { TrashItemMeta, TrashResourceType } from '@lobechat/types';
-import { TRASH_RETENTION_DAYS } from '@lobechat/types';
 import { and, eq } from 'drizzle-orm';
 
 import { trashItems } from '../schemas/trash';
 import type { LobeChatDatabase } from '../type';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Columns a trash-aware row gets when it is moved to the recycle bin. */
 export const trashStamp = (now = new Date()) => ({ deletedAt: now, isDeleted: true as const });
@@ -39,7 +37,7 @@ export const registerTrashItem = async (
     .values({
       deletedAt: now,
       deletedByUserId: params.deletedByUserId,
-      expiresAt: new Date(now.getTime() + TRASH_RETENTION_DAYS * DAY_MS),
+      expiresAt: new Date(now.getTime() + TRASH_RETENTION_MS),
       meta: params.meta,
       resourceId: params.resourceId,
       resourceType: params.resourceType,
