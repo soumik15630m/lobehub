@@ -160,8 +160,6 @@ export class AgentAccountService {
     const issued = await provider.provision({
       agentId: params.agentId,
       displayName: params.displayName,
-      isIdentifierHeld: (identifier) =>
-        AgentAccountModel.isRoutingKeyHeld(this.db, provider.provider, identifier),
       prefix: params.prefix,
       userId: this.userId,
       workspaceId: this.options.workspaceId,
@@ -209,10 +207,9 @@ export class AgentAccountService {
         }
       }
 
-      // The provider holds a resource (an inbox, a number binding) that no row
-      // points at. Hand it back so a failed write leaves nothing billable
-      // behind; the release is best-effort because the original error is the
-      // one worth surfacing.
+      // The provider holds a resource (an inbox) that no row points at. Hand
+      // it back so a failed write leaves nothing billable behind; the release
+      // is best-effort because the original error is the one worth surfacing.
       await provider
         .release({
           credential: issued.credential ?? null,
