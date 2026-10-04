@@ -605,7 +605,7 @@
   "identity.capability.receive": "Can receive",
   "identity.capability.send": "Can send",
   "identity.capability.sendBlocked": "Sending not enabled",
-  "identity.capability.sendBlocked.campaign": "Receives SMS and codes now. Sending opens once the carrier approves the number’s 10DLC registration.",
+  "identity.capability.sendBlocked.campaign": "Receives SMS, codes and voicemail now. Sending SMS opens once the carrier approves the number’s 10DLC registration.",
   "identity.capability.sendBlocked.generic": "This address can receive but not send.",
   "identity.copy": "Copy address",
   "identity.desc": "Addresses this agent owns and can be reached at. Opening one is an explicit action; releasing it hands the address back.",

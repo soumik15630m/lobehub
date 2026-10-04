@@ -605,7 +605,7 @@
   "identity.capability.receive": "可收",
   "identity.capability.send": "可发",
   "identity.capability.sendBlocked": "外发未开通",
-  "identity.capability.sendBlocked.campaign": "现在即可接收短信和验证码；运营商批准该号码的 10DLC 登记后才开放外发。",
+  "identity.capability.sendBlocked.campaign": "现在即可接收短信、验证码和语音留言；运营商批准该号码的 10DLC 登记后才开放短信外发。",
   "identity.capability.sendBlocked.generic": "该地址只能接收，不能发送。",
   "identity.copy": "复制地址",
   "identity.desc": "该 Agent 拥有的地址，外界可通过这些地址联系它。开通是明确的主动操作；释放会把地址交还。",
