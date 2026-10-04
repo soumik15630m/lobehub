@@ -282,7 +282,12 @@ describe('dedicated number — inbound, quarantine and release', () => {
     });
     expect(result).toMatchObject({ created: true, outcome: 'delivered' });
     expect(waker.wake.mock.calls[0][0]).toMatchObject({
-      message: { from: '+15557654321', text: 'Voicemail: Your verification code is 9 1 4 2 7 7' },
+      // Read-out digits are joined so the code is extracted like a texted one.
+      message: {
+        codes: ['914277'],
+        from: '+15557654321',
+        text: 'Voicemail: Your verification code is 914277',
+      },
     });
 
     // A voicemail is not an SMS: no per-segment charge.

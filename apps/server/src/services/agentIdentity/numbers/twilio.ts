@@ -94,6 +94,13 @@ const mapCampaignStatus = (status: unknown): MessagingCampaignStatus => {
   }
 };
 
+/**
+ * A read-out code is transcribed digit by digit ("9 1 4 2 7 7"); join such runs
+ * (4–8 digits) so the inbox can extract it like a texted code.
+ */
+export const collapseSpokenDigits = (text: string): string =>
+  text.replaceAll(/\b\d(?:[ ,-]\d){3,7}\b/g, (run) => run.replaceAll(/[ ,-]/g, ''));
+
 const escapeXml = (value: string) =>
   value
     .replaceAll('&', '&amp;')
@@ -381,7 +388,7 @@ export const createTwilioNumberProvider = (config: TwilioNumberProviderConfig): 
             providerMessageId: params.TranscriptionSid,
             receivedAt: new Date(),
             segments: 0,
-            text: `Voicemail: ${transcript}`,
+            text: `Voicemail: ${collapseSpokenDigits(transcript)}`,
             to: params.To,
           },
           ok: true,

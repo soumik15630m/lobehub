@@ -311,7 +311,7 @@ export default {
   'identity.capability.send': 'Can send',
   'identity.capability.sendBlocked': 'Sending not enabled',
   'identity.capability.sendBlocked.campaign':
-    'Receives SMS and codes now. Sending opens once the carrier approves the number’s 10DLC registration.',
+    'Receives SMS, codes and voicemail now. Sending SMS opens once the carrier approves the number’s 10DLC registration.',
   'identity.capability.sendBlocked.generic': 'This address can receive but not send.',
   'identity.phone.areaCode.hint':
     'Optional 3-digit US area code. Leave empty for the fastest available number.',
