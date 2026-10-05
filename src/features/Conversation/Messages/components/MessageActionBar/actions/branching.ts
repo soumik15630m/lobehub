@@ -19,6 +19,11 @@ export const branchingAction = defineAction({
     const forkCodexMessage = useConversationStore((s) => s.forkCodexMessage);
     const isInputLoading = useConversationStore(messageStateSelectors.isInputLoading);
     const sourceId = ctx.contentBlock?.id ?? ctx.data.children?.at(-1)?.id ?? ctx.id;
+    // Match the persisted row used by forkCodexMessage, not a synthetic group header.
+    const hasNativeForkTarget = useConversationStore((s) => {
+      const metadata = s.dbMessages.find((message) => message.id === sourceId)?.metadata;
+      return Boolean(metadata?.codexTurnId && metadata?.heteroSessionId);
+    });
     const isPartialTurn = Boolean(
       ctx.contentBlock && ctx.data.children?.at(-1)?.id !== ctx.contentBlock.id,
     );
@@ -28,14 +33,14 @@ export const branchingAction = defineAction({
 
     return useMemo(
       () => ({
-        disabled: isCodex && (isInputLoading || isPartialTurn),
+        disabled: isCodex && (isInputLoading || isPartialTurn || !hasNativeForkTarget),
         handleClick: async () => {
           if (!topic) {
             toast.warning(t('branchingRequiresSavedTopic'));
             return;
           }
           if (isCodex) {
-            if (isInputLoading || isPartialTurn) return;
+            if (isInputLoading || isPartialTurn || !hasNativeForkTarget) return;
             try {
               await forkCodexMessage(sourceId);
             } catch (error) {
@@ -62,6 +67,7 @@ export const branchingAction = defineAction({
         forkCodexMessage,
         isInputLoading,
         isPartialTurn,
+        hasNativeForkTarget,
         sourceId,
       ],
     );
