@@ -89,7 +89,8 @@ jobs:
       - name: Check against baseline
         if: env.SIZE_GATE_ENABLED == 'true'
         id: entry_graph_check
-        continue-on-error: true
+        # Same-repo PRs are blocked by a change-request review; forks cannot post one.
+        continue-on-error: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: node .github/scripts/bundle-size-gate.cjs check --current size-report/desktop-entry-graph.json --baseline .size-baseline/desktop-entry-graph.json --label "Desktop first-screen static import graph (gzip)" --report size-report/report.md --floor 65536
 
       - name: Upload size report

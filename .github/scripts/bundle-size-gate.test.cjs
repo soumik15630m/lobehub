@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
+const { runInNewContext } = require('node:vm');
+const { parse } = require('yaml');
 
 const {
   buildHeadline,
@@ -296,4 +298,39 @@ test('desktop-entry-graph fails when a lazy chunk joins the main first screen', 
   const result = runDesktopCheck(baseline, regressed);
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\| main \|.*❌/);
+});
+
+test('desktop workflow propagates fork size regressions while allowing same-repo review enforcement', () => {
+  const workflow = parse(
+    fs.readFileSync(path.join(__dirname, '../workflows/desktop-bundle-size.yml'), 'utf8'),
+  );
+  const check = workflow.jobs['desktop-entry-graph'].steps.find(
+    (step) => step.id === 'entry_graph_check',
+  );
+  const baseline = measureDesktopEntryGraph(writeDesktopRenderer());
+  const regressed = measureDesktopEntryGraph(
+    writeDesktopRenderer({ mainExtra: 'import"./settings-EEEEEEEE.js";' }),
+  );
+  const passing = runDesktopCheck(baseline, baseline);
+  const failing = runDesktopCheck(baseline, regressed);
+  assert.equal(passing.status, 0);
+  assert.equal(failing.status, 1);
+
+  for (const headRepo of ['contributor/lobehub', 'lobehub/lobehub']) {
+    const policy = check['continue-on-error'] ?? false;
+    // This workflow expression uses property access and equality, shared with JS.
+    const continueOnError =
+      typeof policy === 'boolean'
+        ? policy
+        : runInNewContext(policy.replaceAll(/^\$\{\{\s*|\s*\}\}$/g, ''), {
+            github: {
+              event: { pull_request: { head: { repo: { full_name: headRepo } } } },
+              repository: 'lobehub/lobehub',
+            },
+          });
+    const conclusion = (result) => (result.status === 0 || continueOnError ? 'success' : 'failure');
+
+    assert.equal(conclusion(passing), 'success');
+    assert.equal(conclusion(failing), headRepo === 'lobehub/lobehub' ? 'success' : 'failure');
+  }
 });
