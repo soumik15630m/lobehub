@@ -231,6 +231,28 @@ describe('analyzeShellCommand', () => {
     });
   });
 
+  describe('expansion and ANSI-C quoting', () => {
+    it('keeps a parameter expansion with inner whitespace as one word', () => {
+      expect(analyzeShellCommand('${X:-rm -rf /} done')[0].words).toEqual([
+        '${X:-rm -rf /}',
+        'done',
+      ]);
+    });
+
+    it.each(['${CMD:-rm}', '${CMD}rm', '$X', '$1', '$@', 'r${X}m'])(
+      'resolves a command word carrying an expansion (%s) to null',
+      (word) => {
+        expect(analyzeShellCommand(`${word} -rf /`)[0].resolvedCommand).toBeNull();
+      },
+    );
+
+    it('decodes ANSI-C escapes into the real argv', () => {
+      const [segment] = analyzeShellCommand("$'\\x72m' -rf $'\\057' $'a\\tb' $'\\'x'");
+      expect(segment.resolvedCommand).toBe('rm');
+      expect(segment.words).toEqual(['rm', '-rf', '/', 'a\tb', "'x"]);
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty string', () => {
       const segments = analyzeShellCommand('');

@@ -5,6 +5,7 @@ import {
   analyzeShellCommand,
   collectFlagLettersAndNames,
   isUnresolvableCommandWord,
+  parameterExpansionOperand,
 } from './shellCommand';
 
 /**
@@ -33,6 +34,19 @@ import {
  * test — rejecting it because of the real tmp component would leak the
  * bypass.
  */
+/**
+ * Lift a family test over parameter expansions: `${Y:-/}` deletes `/` when Y
+ * is unset, so an operand of that shape matches when any word of its
+ * expansion operand matches (unquoted, the operand is word-split).
+ */
+const withExpansionOperand =
+  (test: (word: string) => boolean) =>
+  (word: string): boolean => {
+    if (test(word)) return true;
+    const operand = parameterExpansionOperand(word);
+    return operand !== undefined && operand.split(/\s+/).some((member) => test(member));
+  };
+
 /** A component that expands to more than one name: `*`, `?`, `[...]`. */
 const hasGlobMeta = (component: string): boolean => /[*?[]/.test(component);
 
@@ -61,7 +75,7 @@ const isRootWideGlobComponent = (component: string): boolean => {
  * of the real `tmp` component. A glob behind a real component (`/tmp` + `/*`)
  * is a subset delete.
  */
-const isRootFamilyTarget = (word: string): boolean => {
+const isRootFamilyTargetLiteral = (word: string): boolean => {
   // A grouping paren can glue to the operand (`(rm -rf /)` tokenizes the
   // target as `/)`): `(`/`)` are shell operators, not part of the path.
   const operand = word.replace(/^\(+/, '').replace(/\)+$/, '');
@@ -71,14 +85,16 @@ const isRootFamilyTarget = (word: string): boolean => {
     return operand
       .slice(1, -1)
       .split(',')
-      .some((member) => isRootFamilyTarget(member));
+      .some((member) => isRootFamilyTargetLiteral(member));
   }
   if (!operand.startsWith('/')) return false;
   const parts = operand
     .replaceAll(/\/\.(?=\/|$)/g, '')
     .split('/')
     .reduce<string[]>((stack, part) => {
-      if (part === '..' && stack.length > 0) stack.pop();
+      // `..` at root stays at root (`/..` IS `/`): popping an empty stack is
+      // a no-op, never a pushed `..` component.
+      if (part === '..') stack.pop();
       else if (part !== '' && part !== '.') stack.push(part);
       return stack;
     }, []);
@@ -86,17 +102,21 @@ const isRootFamilyTarget = (word: string): boolean => {
   return parts.length === 1 && isRootWideGlobComponent(parts[0]);
 };
 
+const isRootFamilyTarget = withExpansionOperand(isRootFamilyTargetLiteral);
+
 /** Home-directory targets: ~, $HOME, /Users/<name>, /home/<name> (optional
  * trailing slash). Shared by the precise predicate and the scoped fallback. */
-const isHomeTarget = (word: string): boolean =>
-  word === '~' ||
-  word === '$HOME' ||
-  word === '~/' ||
-  word === '$HOME/' ||
-  /^\/(?:Users|home)\/[^/]+\/?$/.test(word);
+const isHomeTarget = withExpansionOperand(
+  (word: string): boolean =>
+    word === '~' ||
+    word === '$HOME' ||
+    word === '~/' ||
+    word === '$HOME/' ||
+    /^\/(?:Users|home)\/[^/]+\/?$/.test(word),
+);
 
 /** Current-directory targets: '.' and './'. */
-const isDotTarget = (word: string): boolean => word === '.' || word === './';
+const isDotTarget = withExpansionOperand((word: string): boolean => word === '.' || word === './');
 
 /**
  * Per-predicate target families for the ambiguity fallback. The fallback
@@ -150,6 +170,10 @@ const payloadIsDangerous = (
   // A glued short-flag+value token (`-Srm -rf /` from `env -S'rm -rf /'`)
   // buries the payload after the flag letter; also try the un-glued tail.
   const candidates = word.startsWith('-') && word.length > 2 ? [word, word.slice(2)] : [word];
+  // `${X:-rm -rf /}` in the command slot word-splits its operand into the
+  // executed argv: re-parse the operand as a payload too.
+  const operand = parameterExpansionOperand(word);
+  if (operand !== undefined) candidates.push(operand);
   return candidates.some((candidate) =>
     analyzeShellCommand(candidate).some((segment) => {
       if (segment.resolvedCommand === 'rm')
@@ -195,23 +219,28 @@ const hasAmbiguousRmShape = (
   const rmIndex = words.findIndex((word) => word === 'rm' || /\/rm$/.test(word));
   if (rmIndex < 0) {
     // The executable is unknowable at parse time: command substitution
-    // ($(printf rm) -rf ~, `printf rm` -rf ~) or variable expansion
-    // (X=rm; $X -rf /). No rm word exists in the segment, and per the module
-    // principle an unresolvable argv[0] next to a recursive flag + a family
-    // target must not pass. Detect such a first word (optionally after fd
-    // digits) and fall through to the recursive-flag + family-target scan
-    // below.
-    const first = words[0];
-    if (first !== undefined && !/^\d+$/.test(first) && isUnresolvableCommandWord(first)) {
+    // ($(printf rm) -rf ~, `printf rm` -rf ~) or parameter expansion of any
+    // shape (X=rm; $X -rf /, ${CMD:-rm} -rf /, sudo ${CMD}rm -rf /). No rm
+    // word exists in the segment, and per the module principle an
+    // unresolvable argv[0] next to a recursive flag + a family target must
+    // not pass. The command slot may sit behind a wrapper (sudo/timeout …),
+    // so any unresolvable word in an ambiguous segment counts.
+    const hasUnresolvableWord = words.some(
+      (word) => !/^\d+$/.test(word) && isUnresolvableCommandWord(word),
+    );
+    if (hasUnresolvableWord) {
       const { letters, names } = collectFlagLettersAndNames(segment.flags);
-      if (letters.has('r') || names.has('recursive')) {
-        return words.slice(1).some(TARGET_FAMILY_TESTS[predicate]);
+      if (
+        (letters.has('r') || names.has('recursive')) &&
+        words.slice(1).some(TARGET_FAMILY_TESTS[predicate])
+      ) {
+        return true;
       }
-      return false;
     }
     // Quoted payload form: the interpreter's -c value arrives as ONE word
     // after quote stripping (`bash -c "rm -rf /"` → word `rm -rf /`). Parse
-    // the payload instead of pattern-guessing its shape.
+    // the payload instead of pattern-guessing its shape — this also covers
+    // an expansion whose operand is the whole command (`${X:-rm -rf /}`).
     return words.some((word) => payloadIsDangerous(word, depth, predicate));
   }
   // Recursive flag detection shared with the precise predicates: long names
@@ -295,14 +324,13 @@ const isRmRecursiveHomeTarget = (segment: ShellSegment): boolean => {
   if (!recursive) return false;
   // `$HOME/` ends with a slash so it lands in trailingSlashTargets; check both
   // target collections so every home-resolved shape is covered.
-  const candidates = [...segment.homeTargets, ...segment.trailingSlashTargets];
-  return candidates.some(
-    (target) =>
-      target === '~' ||
-      target === '$HOME' ||
-      target === '~/' ||
-      target === '$HOME/' ||
-      /^\/(?:Users|home)\/[^/]+\/?$/.test(target),
+  // Expansion operands (`${D:-~}`) are not home-shaped words themselves, so
+  // they land in neither target collection; check them explicitly.
+  const expansions = segment.words
+    .slice(1)
+    .filter((word) => parameterExpansionOperand(word) !== undefined);
+  return [...segment.homeTargets, ...segment.trailingSlashTargets, ...expansions].some(
+    isHomeTarget,
   );
 };
 
@@ -316,7 +344,7 @@ const isRmForceDotTarget = (segment: ShellSegment): boolean => {
   const recursive = segment.hasFlag('r') || segment.hasFlag('R');
   const force = segment.hasFlag('f');
   if (!recursive || !force) return false;
-  return segment.trailingSlashTargets.includes('./') || segment.words.slice(1).includes('.');
+  return segment.trailingSlashTargets.includes('./') || segment.words.slice(1).some(isDotTarget);
 };
 
 // Extensible registry: future predicates (disk writes, fork bombs, ...) plug
