@@ -92,6 +92,9 @@ export interface FinalizeAbandonedResult {
  * settled is skipped outright, before any of that — see the guard in
  * `finalizeAbandoned`.
  */
+/** Terminal status an abandonment wrote when it claimed the durable row. */
+type ClaimedStatus = 'abandoned' | 'error';
+
 export class AbandonOperationService {
   private readonly coordinator: AgentRuntimeCoordinator;
   private readonly snapshotStore: ISnapshotStore | null;
@@ -154,24 +157,32 @@ export class AbandonOperationService {
     // damage. So claim the live row first and let the claim be the decision: it
     // fails exactly when the run settled under us, and once it wins, this call
     // owns the transition under the same contract as a caller-claimed row.
-    let ownsRow = callerClaimed;
-    if (row && !ownsRow) {
-      ownsRow = await new AgentOperationModel(
+    //
+    // Which terminal status the claim wrote matters downstream: the lifecycle
+    // persists onto it, and `recordCompletion` refuses to move a row from one
+    // terminal status to another. A caller's `settleStaleRunning` wrote
+    // `abandoned`; this local claim writes `error`, so the hooks must persist
+    // `error` — reporting it as `abandoned` would be refused and silently drop
+    // `onComplete` / `onError` for every real watchdog abandonment.
+    let claimedStatus: ClaimedStatus | undefined = callerClaimed ? 'abandoned' : undefined;
+    if (row && !claimedStatus) {
+      const claimed = await new AgentOperationModel(
         this.db,
         row.userId,
         row.workspaceId ?? undefined,
       ).settleLive(operationId, 'error');
-      if (!ownsRow) {
+      if (!claimed) {
         log('[%s] abandon skipped: operation settled before it could be claimed', operationId);
         result.abandoned = false;
         return result;
       }
+      claimedStatus = 'error';
     }
 
     const state = await this.coordinator.loadAgentState(operationId);
     if (!state) {
       log('[%s] no agent state in coordinator — already cleaned up', operationId);
-      await this.finalizeRunningOperationWithoutState(operationId, reason, result, ownsRow);
+      await this.finalizeRunningOperationWithoutState(operationId, reason, result, claimedStatus);
       return result;
     }
     result.found = true;
@@ -292,7 +303,7 @@ export class AbandonOperationService {
         await new CompletionLifecycle(this.db, origin.userId, origin.workspaceId, {
           includeShareVisitor,
         }).dispatchHooks(operationId, finalState, 'error', {
-          settledAsAbandoned: ownsRow,
+          settledAsAbandoned: claimedStatus === 'abandoned',
           skipErrorMessageWrite: result.assistantMessageUpdated,
         });
       } catch (e) {
@@ -414,16 +425,18 @@ export class AbandonOperationService {
     operationId: string,
     reason: string,
     result: FinalizeAbandonedResult,
-    settledAsAbandoned?: boolean,
+    claimedStatus?: ClaimedStatus,
   ): Promise<void> {
     const op = await this.findOperationRow(operationId);
-    // A caller that already claimed the row (`settleStaleRunning` writes
-    // `abandoned`, the live-row claim above writes `error`) has moved it to a
-    // terminal status on purpose, so that status still needs the topic /
-    // placeholder / hook side effects below — otherwise the row retires while
-    // the turn keeps loading. Which terminal status it wrote is the caller's
-    // business.
-    const preClaimed = settledAsAbandoned === true && isAgentOperationSettled(op?.status);
+    // A row this abandonment already claimed (`settleStaleRunning` writes
+    // `abandoned`, the live-row claim above writes `error`) is terminal on
+    // purpose, so it still needs the topic / placeholder / hook side effects
+    // below — otherwise the row retires while the turn keeps loading.
+    const preClaimed = claimedStatus !== undefined && op?.status === claimedStatus;
+    // Only an `abandoned` pre-claim has to be persisted onto as-is: the local
+    // `error` claim matches the status the terminal write below records anyway,
+    // which `recordCompletion` accepts, so that write still fills in the error.
+    const preClaimedAbandoned = preClaimed && claimedStatus === 'abandoned';
     if (
       !op ||
       (!preClaimed &&
@@ -441,8 +454,8 @@ export class AbandonOperationService {
       type: AgentRuntimeErrorType.AgentRuntimeError,
     };
 
-    // The pre-claim already wrote the terminal row; do not overwrite it.
-    if (!preClaimed) {
+    // The `abandoned` pre-claim already wrote the terminal row; do not overwrite it.
+    if (!preClaimedAbandoned) {
       try {
         await new AgentOperationModel(
           this.db,
@@ -523,7 +536,7 @@ export class AbandonOperationService {
         'error',
         // Persist onto the pre-claimed `abandoned` row instead of being refused
         // as a conflicting terminal owner, which would skip the hooks.
-        preClaimed
+        preClaimedAbandoned
           ? { settledAsAbandoned: true, skipErrorMessageWrite: true }
           : { skipErrorMessageWrite: true },
       );
