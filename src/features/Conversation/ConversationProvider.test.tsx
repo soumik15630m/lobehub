@@ -66,7 +66,8 @@ vi.mock('@/hooks/useFetchMemoryForTopic', () => ({ useFetchTopicMemories: vi.fn(
 vi.mock('@/hooks/useFetchNotebookDocuments', () => ({ useFetchNotebookDocuments: vi.fn() }));
 
 vi.mock('@/libs/swr', () => ({
-  useClientDataSWRWithSync: () => ({
+  mutate: vi.fn(),
+  useClientDataSWR: () => ({
     data: undefined,
     error: undefined,
     isLoading: false,
@@ -77,6 +78,8 @@ vi.mock('@/libs/swr', () => ({
 
 vi.mock('@/libs/swr/useCacheScope', () => ({
   getCacheScope: () => 'user-1:personal',
+  isScopeTrusted: () => true,
+  useCacheScope: () => 'user-1:personal',
 }));
 
 vi.mock('@/store/agent', () => ({
@@ -87,9 +90,11 @@ vi.mock('@/store/agent', () => ({
 
 vi.mock('@/store/chat', () => ({
   getChatStoreState: () => ({}),
-  useChatStore: (
-    selector: (state: { activeAgentId: string; creatingTopicIds: string[] }) => unknown,
-  ) => selector({ activeAgentId: 'agt_old', creatingTopicIds: [] }),
+  useChatStore: Object.assign(
+    (selector: (state: { activeAgentId: string; creatingTopicIds: string[] }) => unknown) =>
+      selector({ activeAgentId: 'agt_old', creatingTopicIds: [] }),
+    { getState: () => ({}) },
+  ),
 }));
 
 vi.mock('@/store/chat/selectors', () => ({
