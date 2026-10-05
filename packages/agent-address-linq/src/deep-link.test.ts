@@ -1,7 +1,4 @@
-import type * as NodeCrypto from 'node:crypto';
-import { randomInt } from 'node:crypto';
-
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildLinqDeepLink,
@@ -13,9 +10,8 @@ import {
   normalizeLinqNumber,
 } from './deep-link';
 
-vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof NodeCrypto>();
-  return { ...actual, randomInt: vi.fn(actual.randomInt) };
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('normalizeLinqNumber', () => {
@@ -131,15 +127,32 @@ describe('link codes', () => {
   });
 
   it('draws each symbol uniformly over the alphabet', () => {
-    // A `byte % 31` mapping favours the first 8 symbols; drawing through
-    // `randomInt(alphabet.length)` rejection-samples instead.
-    vi.mocked(randomInt).mockReturnValue((LINQ_LINK_CODE_ALPHABET.length - 1) as never);
+    // `byte % 31` on its own favours the first 8 symbols, so the minter drops
+    // any byte past the last whole multiple of the alphabet and draws again.
+    const rejected = 256 - (256 % LINQ_LINK_CODE_ALPHABET.length);
+    let firstBatch = true;
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(LINQ_LINK_CODE_ALPHABET.length - 1);
+      if (firstBatch) {
+        bytes[0] = rejected;
+        firstBatch = false;
+      }
+      return bytes;
+    });
+    vi.stubGlobal('crypto', { getRandomValues });
 
     const code = createLinqLinkCode();
 
-    expect(randomInt).toHaveBeenCalledWith(LINQ_LINK_CODE_ALPHABET.length);
+    // The out-of-range byte was dropped rather than mapped, so eight symbols
+    // still came out and a second batch had to be drawn to replace it.
     expect(code).toBe(`LH-${LINQ_LINK_CODE_ALPHABET.at(-1)!.repeat(LINQ_LINK_CODE_LENGTH)}`);
-    vi.mocked(randomInt).mockRestore();
+    expect(getRandomValues).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to mint without a CSPRNG', () => {
+    vi.stubGlobal('crypto', undefined);
+
+    expect(() => createLinqLinkCode()).toThrow(/CSPRNG/);
   });
 
   it('does not repeat across a burst of mints', () => {
