@@ -529,6 +529,64 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  describe('twelfth-round review: expansions, ANSI-C quoting, traversal above root', () => {
+    it.each([
+      '${CMD:-rm} -rf /',
+      '${CMD}rm -rf /',
+      'r${X}m -rf /',
+      '$1 -rf /',
+      '$@ -rf /',
+      '"$X" -rf /',
+      'sudo $X -rf /',
+      'sudo ${CMD:-rm} -rf /',
+      'timeout 30 ${X:-rm} -rf /',
+      '${X:-rm -rf /}',
+      'sudo ${X:-rm -rf /}',
+    ])('treats a parameter expansion in the command slot as unresolved: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+    });
+
+    it.each([
+      "$'\\x72m' -rf /",
+      "$'\\162m' -rf /",
+      "$'\\u0072m' -rf /",
+      "$'rm' -rf /",
+      "rm -rf $'\\x2f'",
+    ])('decodes ANSI-C quoting before matching: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+    });
+
+    it.each(['rm --no-preserve-root -rf /../', 'rm -rf /..', 'rm -rf /../../', 'rm -rf /../*'])(
+      'normalizes parent traversal above root to root: %s',
+      (command) => {
+        expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+      },
+    );
+
+    it.each([
+      { command: 'rm -rf ${Y:-/}', predicate: 'rmRecursiveRootTarget' },
+      { command: 'rm -rf ${D:-~}', predicate: 'rmRecursiveHomeTarget' },
+      { command: 'rm -rf ${D:=.}', predicate: 'rmForceDotTarget' },
+    ])(
+      'matches a target reachable through an expansion operand: $command',
+      ({ command, predicate }) => {
+        expect(matchSemanticShellPredicate(predicate, command)).toBe(true);
+      },
+    );
+
+    it.each([
+      'rm -rf /../tmp',
+      'rm -rf "${OUT:-dist}/"',
+      'echo ${X:-rm} -rf /',
+      'echo ${X:-rm -rf /}',
+      "echo $'rm -rf /'",
+      '$EDITOR -r /tmp/foo',
+      'ls ${HOME}/x',
+    ])('keeps non-root shapes allowed: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED

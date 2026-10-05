@@ -63,15 +63,35 @@ const commandBasename = (word: string): string => {
  *
  * - command substitution — `$(printf rm) -rf ~`, `` `printf rm` -rf ~ ``: the
  *   substitution's OUTPUT is the executable;
- * - variable expansion — `X=rm; $X -rf /`, `${CMD} -rf ~`: the variable's
- *   value is the executable, and this analyzer does not track assignments
- *   across segments.
+ * - parameter expansion of ANY shape — `X=rm; $X -rf /`, `${CMD} -rf ~`,
+ *   `${CMD:-rm} -rf /`, `${CMD}rm -rf /`, `r${X}m`, `$1`, `$@`: the value
+ *   (or default) is the executable, and this analyzer does not track
+ *   assignments, positional parameters or defaults.
+ *
+ * Any `$` in the command word counts — the tokenizer has already removed
+ * quotes, so quoting provenance is gone, and a literal `$` in an executable
+ * name is not worth trusting. Over-detection here only routes the segment to
+ * the conservative fallback (recursive flag + family target), never blocks a
+ * command on its own.
  *
  * Such a word must never be trusted as a confident command name; callers
  * resolve it to null so the ambiguity fallback stays conservative.
  */
 export const isUnresolvableCommandWord = (word: string): boolean =>
-  word.includes('$(') || word.includes('`') || /^\$\{?[A-Z_]\w*\}?$/i.test(word);
+  word.includes('$') || word.includes('`');
+
+/**
+ * The value a `${NAME<op>WORD}` expansion can produce from its WORD operand:
+ * `${X:-rm -rf /}` / `${X-…}` (default), `${X:=…}` / `${X=…}` (assign
+ * default) and `${X:+…}` / `${X+…}` (alternate value) all yield WORD under
+ * some state of X. Unquoted, that value is word-split and executed (command
+ * slot) or deleted (operand), so callers analyze it alongside the word.
+ * Returns undefined for any other shape.
+ */
+export const parameterExpansionOperand = (word: string): string | undefined => {
+  const match = /^\$\{[a-z_]\w*:?[-=+]([\S\s]*?)\}?$/i.exec(word);
+  return match ? match[1] : undefined;
+};
 
 /**
  * Bash reserved words that introduce a command whose FIRST follower executes:
@@ -397,6 +417,68 @@ const splitIntoRawSegments = (command: string): string[] => {
   return parts.map((part) => part.trim()).filter((part) => part.length > 0);
 };
 
+const ANSI_C_SIMPLE_ESCAPES: Record<string, string> = {
+  '"': '"',
+  "'": "'",
+  '?': '?',
+  '\\': '\\',
+  'E': '\x1B',
+  'a': '\x07',
+  'b': '\b',
+  'e': '\x1B',
+  'f': '\f',
+  'n': '\n',
+  'r': '\r',
+  't': '\t',
+  'v': '\v',
+};
+
+/**
+ * Decode an ANSI-C quoted payload starting just after `$'`. Returns the
+ * decoded text and the index just past the closing quote (or the end of
+ * input when unterminated).
+ */
+const decodeAnsiCQuoted = (raw: string, start: number): { end: number; value: string } => {
+  let value = '';
+  let i = start;
+  const readDigits = (pattern: RegExp, max: number): string => {
+    let digits = '';
+    while (digits.length < max && i < raw.length && pattern.test(raw[i])) digits += raw[i++];
+    return digits;
+  };
+  while (i < raw.length) {
+    const char = raw[i];
+    if (char === "'") return { end: i + 1, value };
+    if (char !== '\\' || i + 1 >= raw.length) {
+      value += char;
+      i++;
+      continue;
+    }
+    const next = raw[i + 1];
+    i += 2;
+    if (next in ANSI_C_SIMPLE_ESCAPES) {
+      value += ANSI_C_SIMPLE_ESCAPES[next];
+    } else if (next === 'x') {
+      const hex = readDigits(/[\da-f]/i, 2);
+      value += hex ? String.fromCodePoint(Number.parseInt(hex, 16)) : '\\x';
+    } else if (next === 'u' || next === 'U') {
+      const hex = readDigits(/[\da-f]/i, next === 'u' ? 4 : 8);
+      const codePoint = hex ? Number.parseInt(hex, 16) : Number.NaN;
+      value += codePoint <= 0x10_ffff ? String.fromCodePoint(codePoint) : `\\${next}${hex}`;
+    } else if (/[0-7]/.test(next)) {
+      i--;
+      const octal = readDigits(/[0-7]/, 3);
+      value += String.fromCodePoint(Number.parseInt(octal, 8) & 0xff);
+    } else if (next === 'c' && i < raw.length) {
+      value += String.fromCodePoint(raw[i++].toUpperCase().charCodeAt(0) ^ 0x40);
+    } else {
+      // Unknown escape: bash keeps the backslash.
+      value += `\\${next}`;
+    }
+  }
+  return { end: i, value };
+};
+
 /**
  * Tokenize a segment into words, honoring quotes and keeping quoted content
  * as single words (quote markers removed). Redirections are removed here.
@@ -407,6 +489,7 @@ const tokenizeWords = (raw: string): string[] => {
   let quote: '"' | "'" | null = null;
   let hasWord = false;
   let inSubstitution = 0;
+  let inBrace = 0;
   let inBacktick = false;
 
   const flush = () => {
@@ -475,13 +558,14 @@ const tokenizeWords = (raw: string): string[] => {
       continue;
     }
 
-    // ANSI-C quoting $'…': the payload behaves like a quoted word. Keep the
-    // '$' so value-taking flags still consume the word, and let the quote
-    // scanner strip the payload below.
+    // ANSI-C quoting $'…': the shell decodes the backslash escapes BEFORE
+    // exec, so `$'\x72m' -rf /` runs rm and `rm -rf $'\x2f'` deletes root.
+    // Decode the payload here so matching sees the real argv.
     if (char === '$' && raw[i + 1] === "'") {
-      quote = "'";
+      const { end, value } = decodeAnsiCQuoted(raw, i + 2);
+      word += value;
       hasWord = true;
-      i += 2;
+      i = end;
       continue;
     }
 
@@ -505,6 +589,27 @@ const tokenizeWords = (raw: string): string[] => {
       word += '$(';
       hasWord = true;
       i += 2;
+      continue;
+    }
+
+    // Parameter expansion `${…}` is ONE word at parse time: whitespace inside
+    // it (`${X:-rm -rf /}`) does not split until expansion. Keep the whole
+    // expansion together so its operand can be analyzed as a payload instead
+    // of leaking as fragments (`/}` is not a root target).
+    if (!inSubstitution && !inBacktick && !inBrace && char === '$' && raw[i + 1] === '{') {
+      inBrace = 1;
+      word += '${';
+      hasWord = true;
+      i += 2;
+      continue;
+    }
+
+    if (inBrace) {
+      if (char === '{') inBrace++;
+      if (char === '}') inBrace--;
+      word += char;
+      hasWord = true;
+      i++;
       continue;
     }
 
