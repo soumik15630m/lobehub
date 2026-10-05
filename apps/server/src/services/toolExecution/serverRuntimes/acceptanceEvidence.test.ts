@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   fileFindById: vi.fn(),
   operationFindById: vi.fn(),
   resolveTaskAcceptance: vi.fn(),
+  resultDelete: vi.fn(),
   resultUpsert: vi.fn(),
   runConfirmPlan: vi.fn(),
   runEnsureForOperation: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock('@/database/models/file', () => ({
 }));
 vi.mock('@/database/models/verifyCheckResult', () => ({
   VerifyCheckResultModel: vi.fn(function () {
-    return { upsertByCheckItem: mocks.resultUpsert };
+    return { delete: mocks.resultDelete, upsertByCheckItem: mocks.resultUpsert };
   }),
 }));
 vi.mock('@/database/models/verifyEvidence', () => ({
@@ -165,6 +166,40 @@ describe('acceptanceEvidenceRuntime', () => {
     expect(mocks.resultUpsert).toHaveBeenCalledWith(
       expect.objectContaining({ operationId: 'task-op' }),
     );
+  });
+
+  it('drops the result when the plan was refined away while it was being recorded', async () => {
+    const floor = {
+      id: 'floor-1',
+      index: 0,
+      required: true,
+      title: 'Task delivery',
+      verifierType: 'agent',
+    };
+    const refined = {
+      id: 'generated-1',
+      index: 0,
+      required: true,
+      title: 'Repro runs',
+      verifierType: 'agent',
+    };
+    // First read sees the floor; the run-start refinement swaps it before the
+    // result write lands, so the re-read sees the refined plan.
+    mocks.runFindByOperation.mockImplementation(async () => ({
+      id: 'run-1',
+      plan: mocks.resultUpsert.mock.calls.length > 0 ? [refined] : [floor],
+    }));
+    const runtime = runtimeFor('task-op');
+
+    const result = await runtime.submitEvidence({
+      checkItemId: 'floor-1',
+      evidence: [{ content: 'it runs', type: 'text' }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({ error: 'UNKNOWN_CRITERION', success: false }));
+    expect(result.content).toContain('generated-1');
+    expect(mocks.resultDelete).toHaveBeenCalledWith('result-1');
+    expect(mocks.evidenceCreateMany).not.toHaveBeenCalled();
   });
 
   it('submits repair evidence into the repair round instead of its failed parent', async () => {

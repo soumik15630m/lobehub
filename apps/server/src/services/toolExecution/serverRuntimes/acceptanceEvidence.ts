@@ -438,11 +438,8 @@ class AcceptanceEvidenceExecutionRuntime {
       }
     }
 
-    const result = await new VerifyCheckResultModel(
-      this.db,
-      this.userId,
-      this.workspaceId,
-    ).upsertByCheckItem({
+    const resultModel = new VerifyCheckResultModel(this.db, this.userId, this.workspaceId);
+    const result = await resultModel.upsertByCheckItem({
       checkItemId: item.id,
       checkItemIndex: item.index,
       checkItemTitle: item.title,
@@ -451,6 +448,29 @@ class AcceptanceEvidenceExecutionRuntime {
       verifierType: item.verifierType,
       verifyRunId: run.id,
     });
+
+    // The run-start refinement may have swapped a draft plan between the read
+    // above and this write (it refuses once a result exists, but this result
+    // did not exist yet when it checked). Re-read: a criterion that is no longer
+    // in the plan must not keep an out-of-plan result row.
+    const current = await new VerifyRunModel(
+      this.db,
+      this.userId,
+      this.workspaceId,
+    ).findByOperation(runOperationId);
+    if (!current?.plan?.some((candidate) => candidate.id === item.id)) {
+      await resultModel.delete(result.id);
+      return {
+        canAuthor: !current?.plan?.length,
+        content: current?.plan?.length
+          ? `The criteria for this run changed while "${item.title}" was being recorded — ` +
+            `evidence these ids instead:\n${this.describeCriteria(this.summarize(current.plan))}`
+          : 'This run has no criteria yet, so there is nothing to submit against. Author the ' +
+            'checklist with authorCriteria first, then evidence the ids it returns.',
+        error: 'UNKNOWN_CRITERION',
+        success: false,
+      };
+    }
 
     await new VerifyEvidenceModel(this.db, this.userId, this.workspaceId).createMany(
       params.evidence.map((evidence) => ({
