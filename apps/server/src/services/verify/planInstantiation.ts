@@ -182,13 +182,29 @@ export const instantiateVerifyPlanOnStart = async (
           operationId: params.operationId,
         });
         if (proposed.length) {
-          await runModel.setPlan(run.id, proposed);
-          finalItemCount = proposed.length;
-          log(
-            'refined verify plan for op %s with %d generated items',
-            params.operationId,
-            proposed.length,
+          // proposeAiCriteria leaves every item at index 0; results order by
+          // checkItemIndex, so the plan needs its positions.
+          const refined = proposed.map((item, index) => ({ ...item, index }));
+          // The generation call took seconds, and the floor was readable the
+          // whole time: a builder may have listed it and submitted evidence
+          // against its ids, or authored its own set. Swap only if the run
+          // still carries the untouched floor — re-read and written under one
+          // row lock, so nothing evidenced in the meantime is stranded.
+          const replaced = await runModel.replaceUntouchedDraftPlan(
+            run.id,
+            run.plan.map((item) => item.id),
+            refined,
           );
+          if (replaced) {
+            finalItemCount = refined.length;
+            log(
+              'refined verify plan for op %s with %d generated items',
+              params.operationId,
+              refined.length,
+            );
+          } else {
+            log('floor plan for op %s moved on during refinement; kept it', params.operationId);
+          }
         }
       } catch (error) {
         log(

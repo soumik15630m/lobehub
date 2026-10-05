@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   mergeMetadata: vi.fn(),
   operationFindById: vi.fn(),
   proposeAiCriteria: vi.fn(),
+  replaceUntouchedDraftPlan: vi.fn(),
   resolveModelConfig: vi.fn(),
   runFindByOperation: vi.fn(),
   setMetadata: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock('@/database/models/verifyRun', () => ({
       confirmPlan: mocks.confirmPlan,
       ensureForOperation: mocks.ensureForOperation,
       findByOperation: mocks.runFindByOperation,
+      replaceUntouchedDraftPlan: mocks.replaceUntouchedDraftPlan,
       setMetadata: mocks.setMetadata,
       setPlan: mocks.setPlan,
     };
@@ -133,6 +135,7 @@ describe('Verify acceptance lifecycle', () => {
     // nothing unless a test says otherwise.
     mocks.generateDraftPlan.mockResolvedValue(plan);
     mocks.proposeAiCriteria.mockResolvedValue([]);
+    mocks.replaceUntouchedDraftPlan.mockResolvedValue(true);
   });
 
   it('attaches the verify run to the task acceptance that owns its policy', async () => {
@@ -260,7 +263,11 @@ describe('Verify acceptance lifecycle', () => {
       requirement: 'Deliver a runnable repro under ~/WikiSkill-Repro',
     });
     mocks.taskFindById.mockResolvedValue({ instruction: 'Build the repro', name: 'Repro' });
-    const proposed = [{ id: 'generated-1', index: 0, required: true, title: 'Repro runs' }];
+    // proposeAiCriteria leaves every item at index 0 — the caller reindexes.
+    const proposed = [
+      { id: 'generated-1', index: 0, required: true, title: 'Repro runs' },
+      { id: 'generated-2', index: 0, required: true, title: 'Repro is documented' },
+    ];
     mocks.proposeAiCriteria.mockResolvedValue(proposed);
     mocks.runFindByOperation
       .mockResolvedValueOnce(null)
@@ -286,8 +293,17 @@ describe('Verify acceptance lifecycle', () => {
       expect.objectContaining({ context: 'Deliver a runnable repro under ~/WikiSkill-Repro' }),
     );
     expect(mocks.proposeAiCriteria.mock.calls[0][0]).not.toHaveProperty('modelConfig');
-    // …and the generated criteria replace the floor on the same unconfirmed run.
-    expect(mocks.setPlan).toHaveBeenCalledWith('run-1', proposed);
+    // …and the generated criteria replace the floor on the same unconfirmed run,
+    // in order, and only if the floor is still the plan they were read against.
+    expect(mocks.replaceUntouchedDraftPlan).toHaveBeenCalledWith(
+      'run-1',
+      plan.map((item) => item.id),
+      [
+        expect.objectContaining({ id: 'generated-1', index: 0 }),
+        expect.objectContaining({ id: 'generated-2', index: 1 }),
+      ],
+    );
+    expect(mocks.setPlan).not.toHaveBeenCalled();
     expect(mocks.confirmPlan).toHaveBeenCalledWith('run-1');
     expect(mocks.acceptanceAttachPolicyRun).toHaveBeenCalledWith('run-1', 'acceptance-1');
   });
@@ -321,6 +337,33 @@ describe('Verify acceptance lifecycle', () => {
     expect(mocks.confirmPlan).toHaveBeenCalledWith('run-1');
     expect(mocks.acceptanceAttachPolicyRun).toHaveBeenCalledWith('run-1', 'acceptance-1');
     expect(mocks.mergeMetadata).not.toHaveBeenCalled();
+  });
+
+  it('keeps the floor a builder evidenced while the generation call was in flight', async () => {
+    mocks.taskAcceptanceResolve.mockResolvedValue({
+      acceptance: { id: 'acceptance-1' },
+      config: { enabled: true },
+      requirement: 'Deliver a runnable repro',
+    });
+    mocks.taskFindById.mockResolvedValue({ name: 'Repro' });
+    mocks.proposeAiCriteria.mockResolvedValue([{ id: 'generated-1', index: 0 }]);
+    // The run still reads as the floor before the call, but by the time the
+    // proposal lands a result exists against a floor id: the compare-and-set
+    // refuses, and the floor (with its evidence) stays the plan.
+    mocks.replaceUntouchedDraftPlan.mockResolvedValue(false);
+    mocks.runFindByOperation
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'run-1', plan });
+
+    await instantiateVerifyPlanOnStart(db, 'user-1', {
+      operationId: 'operation-1',
+      taskId: 'task-1',
+    });
+
+    expect(mocks.replaceUntouchedDraftPlan).toHaveBeenCalledTimes(1);
+    expect(mocks.setPlan).not.toHaveBeenCalled();
+    expect(mocks.confirmPlan).toHaveBeenCalledWith('run-1');
+    expect(mocks.acceptanceAttachPolicyRun).toHaveBeenCalledWith('run-1', 'acceptance-1');
   });
 
   it('leaves the checklist a builder authored while the generation call was in flight', async () => {
