@@ -517,6 +517,54 @@ describe('AbandonOperationService', () => {
       );
     });
 
+    it('fires the hooks onto the error status its own claim wrote', async () => {
+      // Regression: the local claim moves the row to `error`, but the hooks
+      // were told the row had been settled as `abandoned`. `recordCompletion`
+      // refuses to move one terminal status to another, so the persist was
+      // rejected and `onComplete` / `onError` (task / bot hooks) never fired.
+      await abandonWithRow('running');
+
+      expect(dispatchHooksMock).toHaveBeenCalledWith(
+        'op_x',
+        expect.anything(),
+        'error',
+        expect.objectContaining({ settledAsAbandoned: false }),
+      );
+    });
+
+    it('fires the no-state hooks onto the error status its own claim wrote', async () => {
+      // Same mismatch on the no-state path (hetero / device runs): the row now
+      // reads `error` after the claim, and the lifecycle must persist `error`.
+      const hooks = [{ id: 'h1', type: 'onComplete', webhook: { url: '/hook' } }];
+      const row = { ...settledRow('running'), metadata: { _hooks: hooks } };
+      const findFirst = vi
+        .fn()
+        .mockResolvedValueOnce(row)
+        .mockResolvedValue({ ...row, status: 'error' });
+      topicSettleRunningOperationMock.mockResolvedValue({
+        assistantMessageId: 'msg_assist_1',
+        status: 'settled',
+      });
+
+      const result = await new AbandonOperationService(
+        { query: { agentOperations: { findFirst }, messages: { findFirst: vi.fn() } } } as any,
+        {
+          coordinator: buildCoordinator({ loadAgentState: vi.fn().mockResolvedValue(null) }) as any,
+          snapshotStore: buildStore() as any,
+        },
+      ).finalizeAbandoned('op_x', 'inactivity_watchdog');
+
+      expect(result.abandoned).toBe(true);
+      // The error detail still lands on the row: `error` → `error` is accepted.
+      expect(recordCompletionMock).toHaveBeenCalledWith(
+        'op_x',
+        expect.objectContaining({ status: 'error' }),
+      );
+      expect(completeOperationMock).toHaveBeenCalledWith(expect.anything(), 'error', {
+        skipErrorMessageWrite: true,
+      });
+    });
+
     it('leaves the turn alone when the run settles before the claim lands', async () => {
       // Interleaving: the read still saw `running`, but the executor committed
       // `done` before the CAS — so not one abandonment side effect may run.
