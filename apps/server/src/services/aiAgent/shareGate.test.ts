@@ -7,6 +7,7 @@ import {
 import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
 import { CalculatorIdentifier } from '@lobechat/builtin-tool-calculator';
 import { CloudSandboxManifest } from '@lobechat/builtin-tool-cloud-sandbox';
+import { ConversationSearchIdentifier } from '@lobechat/builtin-tool-conversation-search';
 import {
   KnowledgeBaseApiName,
   KnowledgeBaseIdentifier,
@@ -411,6 +412,26 @@ describe('applyShareGateToToolSet', () => {
     expect(toolSet.enabledToolIds).toEqual([]);
     expect(toolSet.manifestMap).toEqual({});
     expect(toolSet.tools).toEqual([]);
+  });
+
+  it('never exposes lobe-conversation-search to a share visitor, even if granted', () => {
+    // One query would sweep the creator's whole conversation history, so the
+    // tool stays off the default-deny allowlist regardless of stored grants.
+    const toolSet = buildToolSet([
+      {
+        apis: [{ name: 'searchTopics' }, { name: 'searchMessages' }, { name: 'readTopic' }],
+        identifier: ConversationSearchIdentifier,
+      },
+    ]);
+
+    applyShareGateToToolSet(
+      toolSet,
+      buildGate({ toolGrants: [{ identifier: ConversationSearchIdentifier }] }),
+    );
+
+    expect(AGENT_SHARE_ALLOWED_BUILTIN_IDENTIFIERS.has(ConversationSearchIdentifier)).toBe(false);
+    expect(toolSet.enabledToolIds).toEqual([]);
+    expect(toolSet.manifestMap).toEqual({});
   });
 
   it('keeps a non-builtin plugin the owner enabled', () => {

@@ -21,6 +21,7 @@ import { BriefManifest } from '@lobechat/builtin-tool-brief';
 import { BrowserManifest } from '@lobechat/builtin-tool-browser';
 import { CalculatorManifest } from '@lobechat/builtin-tool-calculator/manifest';
 import { CloudSandboxManifest } from '@lobechat/builtin-tool-cloud-sandbox';
+import { ConversationSearchManifest } from '@lobechat/builtin-tool-conversation-search';
 import { CredsManifest } from '@lobechat/builtin-tool-creds';
 import {
   GoalManifest,
@@ -228,7 +229,7 @@ export const runtimeManagedToolIds = [
  * `lobe-group-agent-builder`, `lobe-group-management`, `agent-signal-review`,
  * `lobe-user-interaction`, `lobe-activator`,
  * `lobe-local-system`, `lobe-browser`, `lobe-remote-device`,
- * `lobe-topic-reference`, and the hidden system-only self-iteration tools),
+ * `lobe-topic-reference`, `lobe-conversation-search`, and the hidden system-only self-iteration tools),
  * see the denied-bucket doc block at the bottom of
  * `apps/server/src/services/aiAgent/shareGate.ts`.
  */
@@ -496,6 +497,14 @@ const builtinToolRegistry: LobeBuiltinTool[] = [
   {
     identifier: CalculatorManifest.identifier,
     manifest: CalculatorManifest,
+    type: 'builtin',
+  },
+  {
+    // Opt-in: searches the user's own conversation history, so it is neither a
+    // default tool nor exposed to share visitors (see the denied-bucket block
+    // in `apps/server/src/services/aiAgent/shareGate.ts`).
+    identifier: ConversationSearchManifest.identifier,
+    manifest: ConversationSearchManifest,
     type: 'builtin',
   },
   {

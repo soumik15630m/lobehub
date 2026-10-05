@@ -1,0 +1,17 @@
+{
+  "name": "@lobechat/builtin-tool-conversation-search",
+  "version": "1.0.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./executor": "./src/executor/index.ts"
+  },
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "vitest",
+    "test:coverage": "vitest --coverage --silent='passed-only'"
+  },
+  "devDependencies": {
+    "@lobechat/types": "workspace:*"
+  }
+}

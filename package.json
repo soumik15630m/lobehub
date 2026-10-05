@@ -247,6 +247,7 @@
     "@lobechat/builtin-tool-calculator": "workspace:*",
     "@lobechat/builtin-tool-claude-code": "workspace:*",
     "@lobechat/builtin-tool-cloud-sandbox": "workspace:*",
+    "@lobechat/builtin-tool-conversation-search": "workspace:*",
     "@lobechat/builtin-tool-creds": "workspace:*",
     "@lobechat/builtin-tool-goal": "workspace:*",
     "@lobechat/builtin-tool-group-agent-builder": "workspace:*",
