@@ -19,8 +19,6 @@
  * a code. Issuing, storing and expiring a code is the binding flow's job.
  */
 
-import { randomInt } from 'node:crypto';
-
 import type { CountryCode } from 'libphonenumber-js';
 import { getCountries, getCountryCallingCode, parsePhoneNumberFromString } from 'libphonenumber-js';
 
@@ -51,6 +49,28 @@ export const LINQ_LINK_CODE_PATTERN = new RegExp(
 );
 
 /**
+ * Bytes at or above this are dropped instead of being folded into a symbol:
+ * `byte % 31` alone would make the first eight symbols of the alphabet more
+ * likely than the rest, so only whole multiples of the alphabet are mapped.
+ */
+const UNBIASED_BYTE_LIMIT = 256 - (256 % LINQ_LINK_CODE_ALPHABET.length);
+
+/**
+ * Draw random bytes from the platform CSPRNG.
+ *
+ * `globalThis.crypto` rather than `node:crypto`: this module is the one every
+ * client shares, and a static Node builtin import would make it unresolvable
+ * for a browser or phone bundler — even for a caller that only wants to build a
+ * link, not mint a code.
+ */
+const randomBytes = (length: number): Uint8Array => {
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error('createLinqLinkCode needs a CSPRNG: `globalThis.crypto` is unavailable');
+  }
+  return globalThis.crypto.getRandomValues(new Uint8Array(length));
+};
+
+/**
  * Mint a link code.
  *
  * Uses the CSPRNG, not `Math.random`: the code is what a person's first inbound
@@ -58,13 +78,17 @@ export const LINQ_LINK_CODE_PATTERN = new RegExp(
  * claim another person's link.
  */
 export const createLinqLinkCode = (): string => {
-  // `randomInt` rejection-samples, so every symbol is equally likely; a
-  // `byte % 31` mapping would favour the first 8 symbols.
-  let code = '';
-  for (let i = 0; i < LINQ_LINK_CODE_LENGTH; i++) {
-    code += LINQ_LINK_CODE_ALPHABET[randomInt(LINQ_LINK_CODE_ALPHABET.length)];
+  const symbols: string[] = [];
+  // Rejection sampling keeps every symbol equally likely; a second batch is
+  // only drawn when the first leaves too few usable bytes, which is rare.
+  while (symbols.length < LINQ_LINK_CODE_LENGTH) {
+    for (const byte of randomBytes(LINQ_LINK_CODE_LENGTH)) {
+      if (byte >= UNBIASED_BYTE_LIMIT) continue;
+      symbols.push(LINQ_LINK_CODE_ALPHABET[byte % LINQ_LINK_CODE_ALPHABET.length]);
+      if (symbols.length === LINQ_LINK_CODE_LENGTH) break;
+    }
   }
-  return `${LINQ_LINK_CODE_PREFIX}${code}`;
+  return `${LINQ_LINK_CODE_PREFIX}${symbols.join('')}`;
 };
 
 /**
