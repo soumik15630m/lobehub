@@ -1583,6 +1583,8 @@
   "tools.builtins.lobe-cloud-sandbox.title": "Cloud Sandbox",
   "tools.builtins.lobe-computer-use.description": "Use desktop applications, interact with controls, and capture the screen.",
   "tools.builtins.lobe-computer-use.title": "Computer Use",
+  "tools.builtins.lobe-conversation-search.description": "Search and read the user's past conversations by keyword",
+  "tools.builtins.lobe-conversation-search.title": "Conversation Search",
   "tools.builtins.lobe-creds.description": "Manage user credentials for authentication, environment variable injection, and API verification — handle API keys, OAuth tokens, and secrets for third-party integrations.",
   "tools.builtins.lobe-creds.title": "Credentials",
   "tools.builtins.lobe-group-agent-builder.description": "Configure group metadata, members, and shared content for multi-agent groups",

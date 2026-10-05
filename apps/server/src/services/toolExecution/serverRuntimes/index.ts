@@ -23,6 +23,7 @@ import { briefRuntime } from './brief';
 import { browserRuntime } from './browser';
 import { calculatorRuntime } from './calculator';
 import { cloudSandboxRuntime } from './cloudSandbox';
+import { conversationSearchRuntime } from './conversationSearch';
 import { credsRuntime } from './creds';
 import { goalRuntime } from './goal';
 import { goalReportRuntime } from './goalReport';
@@ -88,6 +89,7 @@ registerRuntimes([
   briefRuntime,
   taskRuntime,
   topicReferenceRuntime,
+  conversationSearchRuntime,
   userInteractionRuntime,
   credsRuntime,
   groupAgentBuilderRuntime,

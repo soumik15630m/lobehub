@@ -815,6 +815,14 @@ const applyShareGateToInterventionRequiredApis = (toolSet: ShareGateToolSet): vo
  *   `isTopicVisibleToRun` and is unaffected by this denial — only the
  *   model-invokable tool-call path is unsafe.
  *
+ * - `lobe-conversation-search`: `conversationSearchRuntime`
+ *   (`apps/server/src/services/toolExecution/serverRuntimes/conversationSearch.ts`)
+ *   keyword-searches every topic and message the creator owns (`scope: 'all'`
+ *   is a model argument) and `readTopic` resolves any returned `topicId` the
+ *   same way `lobe-topic-reference` does. Strictly worse than topic reference
+ *   for a visitor: one query sweeps the creator's whole history without having
+ *   to guess ids.
+ *
  * Denied for lack of positive safety evidence (no confirmed exploit was
  * required to withhold access — the point of default-deny is that an unproven
  * tool does not ship):

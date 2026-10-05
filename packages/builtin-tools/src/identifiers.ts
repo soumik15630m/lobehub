@@ -14,6 +14,7 @@ import { AuvManifest } from '@lobechat/builtin-tool-auv';
 import { BrowserManifest } from '@lobechat/builtin-tool-browser';
 import { CalculatorManifest } from '@lobechat/builtin-tool-calculator/manifest';
 import { CloudSandboxManifest } from '@lobechat/builtin-tool-cloud-sandbox';
+import { ConversationSearchManifest } from '@lobechat/builtin-tool-conversation-search';
 import { CredsManifest } from '@lobechat/builtin-tool-creds';
 import {
   GoalManifest,
@@ -48,6 +49,7 @@ export const builtinToolIdentifiers: string[] = [
   AuvManifest.identifier,
   CalculatorManifest.identifier,
   CloudSandboxManifest.identifier,
+  ConversationSearchManifest.identifier,
   CredsManifest.identifier,
   GroupAgentBuilderManifest.identifier,
   GroupManagementManifest.identifier,

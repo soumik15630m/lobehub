@@ -3577,6 +3577,9 @@ When I am ___, I need ___
   'tools.builtins.lobe-brief.description':
     'Report progress, deliver results, and request user decisions',
   'tools.builtins.lobe-brief.title': 'Brief Tools',
+  'tools.builtins.lobe-conversation-search.description':
+    "Search and read the user's past conversations by keyword",
+  'tools.builtins.lobe-conversation-search.title': 'Conversation Search',
   'tools.builtins.lobe-creds.description':
     'Manage user credentials for authentication, environment variable injection, and API verification — handle API keys, OAuth tokens, and secrets for third-party integrations.',
   'tools.builtins.lobe-creds.title': 'Credentials',
