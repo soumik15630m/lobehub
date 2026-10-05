@@ -41,7 +41,7 @@ Verified policies are persisted atomically in `security-update-policy.json` unde
 
 Use the repository [desktop-security-update skill](../../../.agents/skills/desktop-security-update/SKILL.md) to inspect, mark, preview, apply, and revoke restrictions. For example: “Mark Stable Windows shell versions >=2.2.0 <2.2.20 as vulnerable, requiring installer 2.2.20, because of the confirmed security fix.” Scope and release numbers must come from the actual incident.
 
-The existing `release-desktop-core-ota.yml` workflow accepts an optional `security_policy` JSON input. When set, only the policy job runs; ordinary Core build/publish jobs are skipped. Existing manual Core releases and `workflow_call` callers retain their behavior. Policy operations serialize globally across channels. `security_policy_request_id` appears in the run title for unambiguous run discovery.
+The existing `release-desktop-core-ota.yml` workflow accepts an optional `security_policy` JSON input. When set, only the policy job runs; ordinary Core build/publish jobs are skipped. Existing manual Core releases and `workflow_call` callers retain their behavior. The isolated publisher installs from the committed manifest and lockfile in `scripts/security-policy-runtime/` using `npm ci --ignore-scripts`; dependency changes must update both files together. Policy operations serialize globally across channels. `security_policy_request_id` appears in the run title for unambiguous run discovery.
 
 `apps/desktop/scripts/desktopSecurityPolicy.mjs` implements three request types:
 
