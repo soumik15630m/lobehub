@@ -1,5 +1,5 @@
 {
-  "id": "0080325e-ba90-4f74-8e66-389d379ce9d1",
+  "id": "39b6b277-7d5b-4dae-a697-0827b9edd020",
   "prevId": "aa686cd8-d10e-4850-ae83-8941b2d47fae",
   "version": "7",
   "dialect": "postgresql",
@@ -5064,6 +5064,54 @@
           "columns": [
             {
               "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_inbox_messages_account_created_at_idx": {
+          "name": "agent_inbox_messages_account_created_at_idx",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_inbox_messages_account_from_created_at_idx": {
+          "name": "agent_inbox_messages_account_from_created_at_idx",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "from",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
