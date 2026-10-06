@@ -6,9 +6,19 @@ import {
   listReplayableSteps,
   selectFrozenCall,
 } from '@lobechat/agent-tracing/replay';
+import { TRACING_SCENARIOS } from '@lobechat/const';
 import { evaluate } from '@lobechat/eval-rubric';
+import type { TracingOptions } from '@lobechat/llm-generation-tracing';
+import {
+  chainEvalCriteriaDraft,
+  EVAL_CRITERIA_DRAFT_JSON_SCHEMA,
+  EVAL_CRITERIA_DRAFT_PROMPT_VERSION,
+  type EvalCriteriaDraftTurn,
+} from '@lobechat/prompts';
 import type {
   EvalBenchmarkRubric,
+  EvalCriteriaDraft,
+  EvalFrozenCall,
   EvalReplayOptions,
   EvalReplayTarget,
   EvalReplayTargetMetrics,
@@ -17,9 +27,11 @@ import type {
   EvalTestCaseContent,
   RubricType,
 } from '@lobechat/types';
+import { RequestTrigger } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
 import pMap from 'p-map';
+import { z } from 'zod';
 
 import {
   AgentEvalBenchmarkModel,
@@ -34,10 +46,10 @@ import type { AgentEvalReplayResultItem, AgentEvalTestCaseItem } from '@/databas
 import type { LobeChatDatabase } from '@/database/type';
 import { S3SnapshotStore } from '@/server/modules/AgentTracing';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { AiGenerationService } from '@/server/services/aiGeneration';
 import { AgentEvalRunWorkflow } from '@/server/workflows/agentEvalRun';
 
 import { createEvalJudgeContext, resolveEvalJudgeModel } from '../agentEvalRun/judgeContext';
-import { buildFrozenPayloadKey, FrozenCallStore } from './frozenCallStore';
 
 const log = debug('lobe-server:agent-eval-replay');
 
@@ -58,6 +70,16 @@ export interface FreezeFromMessageParams {
   expected?: string;
   messageId: string;
   /** Snapshot step to freeze; defaults to the operation's last `call_llm`. */
+  stepIndex?: number;
+}
+
+export interface DraftCriteriaParams {
+  capturedOutputKind?: 'negative' | 'positive';
+  /** Locale to write the draft in, e.g. `zh-CN`. */
+  locale?: string;
+  messageId: string;
+  /** What the user says is wrong (or right) about the answer. */
+  note?: string;
   stepIndex?: number;
 }
 
@@ -108,6 +130,42 @@ export const buildContentFromFrozenCall = (
     input: turns[lastUserIndex].content,
     ...(history.length > 0 && { messages: history }),
   };
+};
+
+const criteriaDraftSchema = z.object({
+  criteria: z.string().trim().min(1),
+  expected: z.string(),
+  summary: z.string().trim().min(1),
+});
+
+/** Per-turn and total caps on what the drafting model reads, newest turns kept. */
+const DRAFT_TURN_CHARS = 4000;
+const DRAFT_TOTAL_CHARS = 40_000;
+
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max)}\n…[${text.length - max} more characters]` : text;
+
+/**
+ * The frozen call as a transcript for the criteria drafter: system prompt,
+ * turns and tool results — the facts a verdict may hinge on — clipped so a
+ * long agent run still fits, keeping the system prompt and the latest turns.
+ */
+export const buildDraftConversation = (call: FrozenCall): EvalCriteriaDraftTurn[] => {
+  const turns = (call.messages as Array<{ content?: unknown; role?: string }>)
+    .map((m) => ({ content: clip(messageText(m.content), DRAFT_TURN_CHARS), role: m.role ?? '' }))
+    .filter((m) => m.role && m.content.length > 0);
+
+  const [first, ...rest] = turns;
+  const head = first?.role === 'system' ? [first] : [];
+  const body = first?.role === 'system' ? rest : turns;
+
+  let budget = DRAFT_TOTAL_CHARS - (head[0]?.content.length ?? 0);
+  const kept: EvalCriteriaDraftTurn[] = [];
+  for (let i = body.length - 1; i >= 0 && budget > 0; i--) {
+    kept.unshift(body[i]);
+    budget -= body[i].content.length;
+  }
+  return [...head, ...kept];
 };
 
 /**
@@ -209,6 +267,113 @@ export class AgentEvalReplayService {
     const dataset = await this.datasetModel.findById(datasetId);
     if (!dataset) throw new TRPCError({ code: 'NOT_FOUND', message: 'Dataset not found' });
 
+    const message = await this.findAssistantMessage(messageId);
+
+    const existing = await this.testCaseModel.findByDatasetIdAndSourceMessageId(
+      datasetId,
+      messageId,
+    );
+    if (existing) return { created: false, testCase: existing };
+
+    const { call, operationId } = await this.loadFrozenCall(message, stepIndex);
+
+    const frozenCall: EvalFrozenCall = {
+      frozenAt: new Date().toISOString(),
+      messages: call.messages,
+      model: message.model ?? undefined,
+      params: call.params,
+      provider: message.provider ?? undefined,
+      stepIndex: call.stepIndex,
+      tools: call.tools,
+    };
+
+    const capturedOutput = message.content ?? '';
+    const expected =
+      params.expected ?? (capturedOutputKind === 'positive' ? capturedOutput : undefined);
+
+    const testCase = await this.testCaseModel.create({
+      content: { ...buildContentFromFrozenCall(call), ...(expected && { expected }) },
+      datasetId,
+      evalConfig: { criteria },
+      evalMode: 'llm-rubric',
+      frozenCall,
+      frozenStepIndex: call.stepIndex,
+      metadata: { capturedOutput, capturedOutputKind, source: 'conversation-freeze' },
+      sourceMessageId: messageId,
+      sourceOperationId: operationId,
+      sourceTopicId: message.topicId,
+    });
+
+    log(
+      'Froze message %s (op %s, step %d) into case %s',
+      messageId,
+      operationId,
+      call.stepIndex,
+      testCase.id,
+    );
+    return { created: true, testCase };
+  }
+
+  /**
+   * Draft the self-contained criteria (and expected answer) for freezing a
+   * message. Nothing is saved: the user reviews and edits the draft, and only
+   * `freezeFromMessage` writes the case.
+   *
+   * The model reads the frozen call — the exact context the answer was given
+   * in — because the judge later will not: whatever the verdict depends on has
+   * to be written into the criteria now.
+   */
+  async draftCriteria(params: DraftCriteriaParams): Promise<EvalCriteriaDraft> {
+    const { capturedOutputKind = 'negative', locale, messageId, note, stepIndex } = params;
+
+    const message = await this.findAssistantMessage(messageId);
+    const { call } = await this.loadFrozenCall(message, stepIndex);
+
+    const { model, provider } = await resolveEvalJudgeModel(this.db, this.userId);
+    const ai = new AiGenerationService(this.db, this.userId, this.workspaceId);
+
+    const raw = await ai.generateObject(
+      {
+        ...chainEvalCriteriaDraft({
+          capturedOutput: message.content ?? '',
+          capturedOutputKind,
+          conversation: buildDraftConversation(call),
+          locale,
+          note,
+        }),
+        model,
+        provider,
+        schema: EVAL_CRITERIA_DRAFT_JSON_SCHEMA,
+      },
+      {
+        metadata: { trigger: RequestTrigger.Eval },
+        tracing: {
+          promptVersion: EVAL_CRITERIA_DRAFT_PROMPT_VERSION,
+          scenario: TRACING_SCENARIOS.EvalCriteriaDraft,
+          schemaName: EVAL_CRITERIA_DRAFT_JSON_SCHEMA.name,
+        } satisfies TracingOptions,
+      },
+    );
+
+    const parsed = criteriaDraftSchema.safeParse(raw);
+    if (!parsed.success) {
+      log('criteria draft did not match schema: %O', parsed.error.flatten());
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'The drafted criteria did not match the expected shape',
+      });
+    }
+
+    return {
+      criteria: parsed.data.criteria.trim(),
+      expected: parsed.data.expected.trim() || undefined,
+      model,
+      provider,
+      summary: parsed.data.summary.trim(),
+    };
+  }
+
+  private async findAssistantMessage(messageId: string) {
     const message = await new MessageModel(this.db, this.userId, this.workspaceId).findById(
       messageId,
     );
@@ -219,13 +384,14 @@ export class AgentEvalReplayService {
         message: `Only assistant messages can be frozen (got "${message.role}")`,
       });
     }
+    return message;
+  }
 
-    const existing = await this.testCaseModel.findByDatasetIdAndSourceMessageId(
-      datasetId,
-      messageId,
-    );
-    if (existing) return { created: false, testCase: existing };
-
+  /** The recorded `call_llm` behind an assistant message, read from its operation trace. */
+  private async loadFrozenCall(
+    message: { metadata?: unknown },
+    stepIndex?: number,
+  ): Promise<{ call: FrozenCall; operationId: string }> {
     const operationId = (message.metadata as { operationId?: string } | null)?.operationId;
     if (!operationId) {
       throw new TRPCError({
@@ -266,34 +432,7 @@ export class AgentEvalReplayService {
       });
     }
 
-    const frozenPayloadKey = buildFrozenPayloadKey(this.userId, messageId, call.stepIndex);
-    await new FrozenCallStore().write(frozenPayloadKey, call);
-
-    const capturedOutput = message.content ?? '';
-    const expected =
-      params.expected ?? (capturedOutputKind === 'positive' ? capturedOutput : undefined);
-
-    const testCase = await this.testCaseModel.create({
-      content: { ...buildContentFromFrozenCall(call), ...(expected && { expected }) },
-      datasetId,
-      evalConfig: { criteria },
-      evalMode: 'llm-rubric',
-      frozenPayloadKey,
-      frozenStepIndex: call.stepIndex,
-      metadata: { capturedOutput, capturedOutputKind, source: 'conversation-freeze' },
-      sourceMessageId: messageId,
-      sourceOperationId: operationId,
-      sourceTopicId: message.topicId,
-    });
-
-    log(
-      'Froze message %s (op %s, step %d) into case %s',
-      messageId,
-      operationId,
-      call.stepIndex,
-      testCase.id,
-    );
-    return { created: true, testCase };
+    return { call, operationId };
   }
 
   // ============================================
@@ -336,7 +475,7 @@ export class AgentEvalReplayService {
       }
     }
 
-    const notFrozen = candidates.filter((c) => !c.frozenPayloadKey);
+    const notFrozen = candidates.filter((c) => !c.frozenCall);
     if (testCaseIds && notFrozen.length > 0) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -344,7 +483,7 @@ export class AgentEvalReplayService {
       });
     }
 
-    const cases = candidates.filter((c) => c.frozenPayloadKey);
+    const cases = candidates.filter((c) => c.frozenCall);
     if (cases.length === 0) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -420,7 +559,7 @@ export class AgentEvalReplayService {
     }
 
     const testCase = await this.testCaseModel.findById(claimed.testCaseId);
-    if (!testCase?.frozenPayloadKey) {
+    if (!testCase?.frozenCall) {
       const cell = await this.replayResultModel.update(cellId, {
         error: { message: 'Test case has no frozen call', stage: 'replay' },
         status: 'error',
@@ -438,7 +577,7 @@ export class AgentEvalReplayService {
     let usage: AgentEvalReplayResultItem['usage'];
 
     try {
-      const call = await new FrozenCallStore().read(testCase.frozenPayloadKey);
+      const call: FrozenCall = testCase.frozenCall;
       const request = buildReplayRequest({
         call,
         maxTokens: options?.maxTokens,

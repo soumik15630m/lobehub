@@ -24,7 +24,7 @@ ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "source_topic_id" t
 ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "source_message_id" text;--> statement-breakpoint
 ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "source_operation_id" text;--> statement-breakpoint
 ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "frozen_step_index" integer;--> statement-breakpoint
-ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "frozen_payload_key" text;--> statement-breakpoint
+ALTER TABLE "agent_eval_test_cases" ADD COLUMN IF NOT EXISTS "frozen_call" jsonb;--> statement-breakpoint
 ALTER TABLE "agent_eval_replay_results" DROP CONSTRAINT IF EXISTS "agent_eval_replay_results_user_id_users_id_fk";--> statement-breakpoint
 ALTER TABLE "agent_eval_replay_results" ADD CONSTRAINT "agent_eval_replay_results_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_eval_replay_results" DROP CONSTRAINT IF EXISTS "agent_eval_replay_results_workspace_id_workspaces_id_fk";--> statement-breakpoint

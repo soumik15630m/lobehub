@@ -830,6 +830,39 @@ export function registerEvalCommand(program: Command) {
     );
 
   testcaseCmd
+    .command('draft')
+    .description(
+      'Draft self-contained judge criteria for freezing an assistant message (saves nothing)',
+    )
+    .requiredOption('--message-id <id>', 'Assistant message to draft criteria for')
+    .option('--note <text>', 'What is wrong (or right) about the answer')
+    .option('--positive', 'The captured answer is good')
+    .option('--locale <locale>', 'Language to write the criteria in, e.g. zh-CN')
+    .option('--step <n>', 'Snapshot step to read (default: last call_llm)')
+    .option('--json', 'Output JSON envelope')
+    .action(
+      async (
+        options: JsonOption & {
+          locale?: string;
+          messageId: string;
+          note?: string;
+          positive?: boolean;
+          step?: string;
+        },
+      ) =>
+        executeCommand(options, async () => {
+          const client = await getTrpcClient();
+          return client.agentEval.draftTestCaseCriteria.mutate({
+            capturedOutputKind: options.positive ? 'positive' : 'negative',
+            locale: options.locale,
+            messageId: options.messageId,
+            note: options.note,
+            stepIndex: options.step === undefined ? undefined : Number.parseInt(options.step, 10),
+          });
+        }),
+    );
+
+  testcaseCmd
     .command('count')
     .description('Count test cases by dataset (external eval API)')
     .requiredOption('--dataset-id <id>', 'Dataset ID')
@@ -1014,6 +1047,10 @@ export function registerEvalCommand(program: Command) {
     .option('--id <id>', 'Caller-supplied run ID (idempotent create; 409 if params differ)')
     .option('--include-cases <ids>', 'Comma-separated dataset-native case IDs to include')
     .option('--exclude-cases <ids>', 'Comma-separated dataset-native case IDs to exclude')
+    .option(
+      '-m, --model <list>',
+      'Comma-separated provider/model the agent runs on (overrides its own model); several create one run per model',
+    )
     .option('--json', 'Output JSON envelope')
     .action(
       async (
@@ -1021,6 +1058,7 @@ export function registerEvalCommand(program: Command) {
           agentId?: string;
           datasetId: string;
           excludeCases?: string;
+          model?: string;
           experimentId?: string;
           external?: boolean;
           id?: string;
@@ -1067,7 +1105,38 @@ export function registerEvalCommand(program: Command) {
                 caseIds: parseCaseIds(options.excludeCases),
                 mode: 'exclude',
               };
+            const subjects = options.model ? parseModelTargets(options.model) : [];
+            if (subjects.length === 1) {
+              config.subjectModel = subjects[0].model;
+              config.subjectProvider = subjects[0].provider;
+            }
             if (Object.keys(config).length > 0) input.config = config;
+
+            if (subjects.length > 1) {
+              if (options.external || options.id) {
+                throw new InvalidArgumentError(
+                  'Several --model values create one run each; --external and --id take a single run',
+                );
+              }
+              if (!options.agentId) {
+                throw new InvalidArgumentError(
+                  '--agent-id is required with several --model values',
+                );
+              }
+              const dataset = await client.agentEval.getDataset.query({ id: options.datasetId });
+              const runs = await client.agentEval.createSubjectRuns.mutate({
+                ...(input as any),
+                subjects: subjects.map(({ model, provider }) => ({ model, provider })),
+              });
+              return runs.map((run: { id: string }) =>
+                withResourceUrl(
+                  buildUrl,
+                  run,
+                  `/eval/bench/${encodeURIComponent(dataset.benchmarkId)}/runs/${encodeURIComponent(run.id)}`,
+                ),
+              );
+            }
+
             const dataset = options.external
               ? await client.agentEvalExternal.datasetGet.query({ datasetId: options.datasetId })
               : await client.agentEval.getDataset.query({ id: options.datasetId });

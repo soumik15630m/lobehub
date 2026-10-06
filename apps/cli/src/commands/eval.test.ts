@@ -17,12 +17,14 @@ const { mockTrpcClient, mockResolveLocalDeviceId } = vi.hoisted(() => ({
       createDataset: { mutate: vi.fn() },
       createExperiment: { mutate: vi.fn() },
       createRun: { mutate: vi.fn() },
+      createSubjectRuns: { mutate: vi.fn() },
       createTestCase: { mutate: vi.fn() },
       deleteBenchmark: { mutate: vi.fn() },
       deleteDataset: { mutate: vi.fn() },
       deleteExperiment: { mutate: vi.fn() },
       deleteRun: { mutate: vi.fn() },
       deleteTestCase: { mutate: vi.fn() },
+      draftTestCaseCriteria: { mutate: vi.fn() },
       getBenchmark: { query: vi.fn() },
       getDataset: { query: vi.fn() },
       getExperiment: { query: vi.fn() },
@@ -114,6 +116,29 @@ describe('eval command', () => {
   // Frozen-call replay tests
   // ============================================
   describe('testcase freeze / compare', () => {
+    it('drafts criteria for a message without saving anything', async () => {
+      mockTrpcClient.agentEval.draftTestCaseCriteria.mutate.mockResolvedValue({
+        criteria: 'The user is Arvin.',
+        model: 'gpt-5.6-luna',
+        provider: 'openai',
+        summary: 'Mistook the user',
+      });
+
+      await createProgram().parseAsync(
+        ['eval', 'testcase', 'draft', '--message-id', 'msg_1', '--note', 'wrong person', '--json'],
+        { from: 'user' },
+      );
+
+      expect(mockTrpcClient.agentEval.draftTestCaseCriteria.mutate).toHaveBeenCalledWith({
+        capturedOutputKind: 'negative',
+        locale: undefined,
+        messageId: 'msg_1',
+        note: 'wrong person',
+        stepIndex: undefined,
+      });
+      expect(mockTrpcClient.agentEval.freezeTestCaseFromMessage.mutate).not.toHaveBeenCalled();
+    });
+
     it('freezes a message with criteria read from a file', async () => {
       const criteriaFile = path.join(os.tmpdir(), `criteria-${Date.now()}.md`);
       await writeFile(criteriaFile, 'The user is Arvin.');
@@ -842,6 +867,70 @@ describe('eval command', () => {
 
       expect(mockTrpcClient.agentEval.createRun.mutate).toHaveBeenCalledWith(
         expect.objectContaining({ datasetId: 'd1', name: 'Run 1' }),
+      );
+    });
+
+    it('runs the agent on one subject model via the run config', async () => {
+      mockTrpcClient.agentEval.getDataset.query.mockResolvedValue({ benchmarkId: 'b1' });
+      mockTrpcClient.agentEval.createRun.mutate.mockResolvedValue({ id: 'r1' });
+
+      const program = createProgram();
+      await program.parseAsync(
+        [
+          'eval',
+          'run',
+          'create',
+          '--dataset-id',
+          'd1',
+          '--agent-id',
+          'a1',
+          '-m',
+          'openai/gpt-6-luna',
+        ],
+        { from: 'user' },
+      );
+
+      expect(mockTrpcClient.agentEval.createRun.mutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: { subjectModel: 'gpt-6-luna', subjectProvider: 'openai' },
+          targetAgentId: 'a1',
+        }),
+      );
+    });
+
+    it('creates one run per model when several are given', async () => {
+      mockTrpcClient.agentEval.getDataset.query.mockResolvedValue({ benchmarkId: 'b1' });
+      mockTrpcClient.agentEval.createSubjectRuns.mutate.mockResolvedValue([
+        { id: 'r1' },
+        { id: 'r2' },
+      ]);
+
+      const program = createProgram();
+      await program.parseAsync(
+        [
+          'eval',
+          'run',
+          'create',
+          '--dataset-id',
+          'd1',
+          '--agent-id',
+          'a1',
+          '-m',
+          'openai/gpt-6-luna,deepseek/deepseek-v4-flash',
+        ],
+        { from: 'user' },
+      );
+
+      expect(mockTrpcClient.agentEval.createRun.mutate).not.toHaveBeenCalled();
+      expect(mockTrpcClient.agentEval.createSubjectRuns.mutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          datasetId: 'd1',
+          subjects: [
+            { model: 'gpt-6-luna', provider: 'openai' },
+            { model: 'deepseek-v4-flash', provider: 'deepseek' },
+          ],
+          targetAgentId: 'a1',
+        }),
       );
     });
 

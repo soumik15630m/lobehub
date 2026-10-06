@@ -1,6 +1,7 @@
 import type {
   EvalBenchmarkRubric,
   EvalConfig,
+  EvalFrozenCall,
   EvalReplayError,
   EvalReplayResultStatus,
   EvalReplayToolCall,
@@ -245,9 +246,9 @@ export const agentEvalTestCases = pgTable(
 
     sortOrder: integer('sort_order'),
 
-    // Provenance of a case frozen out of a real conversation. The topic and
-    // message can be deleted later; the frozen payload in S3 keeps the case
-    // replayable after they are gone.
+    // Provenance of a case frozen out of a real conversation. The topic,
+    // message and trace can all be deleted later; the frozen call stored inline
+    // below keeps the case replayable after they are gone.
     sourceTopicId: text('source_topic_id').references(() => topics.id, { onDelete: 'set null' }),
     sourceMessageId: text('source_message_id').references(() => messages.id, {
       onDelete: 'set null',
@@ -256,8 +257,12 @@ export const agentEvalTestCases = pgTable(
     sourceOperationId: text('source_operation_id'),
     /** Snapshot step index of the frozen `call_llm` (`FrozenCall.stepIndex`). */
     frozenStepIndex: integer('frozen_step_index'),
-    /** S3 key of the zstd JSON `FrozenCall` (messages + tools) replay runs re-issue. */
-    frozenPayloadKey: text('frozen_payload_key'),
+    /**
+     * The LLM call replay runs re-issue: the context-engine messages, the tools
+     * visible at that step and the original model/provider. Stored on the row
+     * rather than referenced in S3 so it outlives the trace it was copied from.
+     */
+    frozenCall: jsonb('frozen_call').$type<EvalFrozenCall>(),
 
     ...timestamps,
   },

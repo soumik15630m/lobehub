@@ -42,6 +42,42 @@ export interface EvalTestCaseContent {
   messages?: ImportedMessage[];
 }
 
+/** A model-drafted criteria for a case about to be frozen; never saved until the user confirms. */
+export interface EvalCriteriaDraft {
+  criteria: string;
+  expected?: string;
+  /** Model that wrote the draft. */
+  model: string;
+  provider: string;
+  /** One sentence naming what the captured answer got wrong (or right). */
+  summary: string;
+}
+
+/**
+ * One LLM call frozen out of a recorded run, stored inline on a test case.
+ *
+ * It is exactly what the model saw at that step — the context-engine output
+ * messages and the tool definitions visible then — plus the model that
+ * originally answered, so a replay can re-issue it against any model without
+ * the source trace, which is pruned on its own lifecycle.
+ */
+export interface EvalFrozenCall {
+  /** When the call was copied out of the trace (ISO string). */
+  frozenAt: string;
+  /** Context-engine output messages, in provider chat format. */
+  messages: unknown[];
+  /** Model that produced the captured answer. */
+  model?: string;
+  /** Sampling parameters the original call ran with, when the trace recorded them. */
+  params?: Record<string, unknown>;
+  /** Provider that produced the captured answer. */
+  provider?: string;
+  /** Snapshot step index of the frozen `call_llm`. */
+  stepIndex: number;
+  /** Tool (function) definitions visible to the model at this step. */
+  tools?: unknown[];
+}
+
 /**
  * Test case metadata
  */
@@ -125,6 +161,14 @@ export interface EvalRunConfig {
   replayOptions?: EvalReplayOptions;
   /** Models every frozen call is re-issued against (replay runs only). */
   replayTargets?: EvalReplayTarget[];
+  /**
+   * Model the target agent runs on for this run, overriding the agent's own
+   * setting — so comparing models is several runs of one agent, not a clone of
+   * the agent per model. Set together with `subjectProvider`; unset runs the
+   * agent's configured model.
+   */
+  subjectModel?: string;
+  subjectProvider?: string;
   timeout?: number;
 }
 
@@ -134,7 +178,13 @@ export interface EvalRunConfig {
  */
 export type EvalRunInputConfig = Pick<
   EvalRunConfig,
-  'caseSelection' | 'k' | 'maxConcurrency' | 'maxSteps' | 'timeout'
+  | 'caseSelection'
+  | 'k'
+  | 'maxConcurrency'
+  | 'maxSteps'
+  | 'subjectModel'
+  | 'subjectProvider'
+  | 'timeout'
 >;
 
 /** One model a replay run re-issues the frozen calls against. */

@@ -476,7 +476,7 @@ table agent_eval_test_cases {
   source_message_id text
   source_operation_id text
   frozen_step_index integer
-  frozen_payload_key text
+  frozen_call jsonb
   accessed_at "timestamp with time zone" [not null, default: `now()`]
   created_at "timestamp with time zone" [not null, default: `now()`]
   updated_at "timestamp with time zone" [not null, default: `now()`]
