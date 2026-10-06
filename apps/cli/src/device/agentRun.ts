@@ -10,29 +10,45 @@ import { resolveHeteroSpawnCwd } from '@lobechat/heterogeneous-agents/workingDir
 import { getTask, removeTask, saveTask } from '../daemon/taskRegistry';
 import { registerAgentRun } from './agentRunRegistry';
 
+/** Immutable execution context for one gateway-dispatched agent operation. */
 export interface SpawnHeteroAgentRunParams {
+  /** Conversation agent identity; omitted requests never inherit the connector's agent. */
+  agentId?: string;
+  /** Native CLI runtime selected by the dispatch request. */
   agentType: string;
   /** Resolved `lh hetero exec` wrapper args. */
   args?: string[];
+  /** Assistant message receiving this operation's ingested events. */
   assistantMessageId?: string;
+  /** Native working directory. @default process.cwd() */
   cwd?: string;
   /** Image attachments (signed URLs) appended as image content blocks. */
   imageList?: HeteroExecImageRef[];
+  /** Operation-scoped credential used by the wrapper's ingest requests. */
   jwt: string;
+  /** Unique execution identity and cancellation lookup key. */
   operationId: string;
+  /** User input delivered through stdin without shell interpolation. */
   prompt: string;
   /** System context used only by the automatic retry without native resume. */
   resumeFallbackSystemContext?: string;
+  /** Native session to continue; absence starts a new session. */
   resumeSessionId?: string;
+  /** Backend origin receiving execution events. */
   serverUrl: string;
+  /** Conversation context prepended when starting a native session. */
   systemContext?: string;
+  /** Persisted conversation owning the operation. */
   topicId: string;
   /** Topic/run workspace — forwarded as `LOBEHUB_WORKSPACE_ID` for ingest. */
   workspaceId?: string;
 }
 
+/** Whether the device successfully started the operation wrapper process. */
 export interface AgentRunAckResult {
+  /** Spawn failure explanation, present for rejected requests. */
   reason?: string;
+  /** Spawn outcome only; accepted does not mean execution completed. */
   status: 'accepted' | 'rejected';
 }
 
@@ -55,12 +71,30 @@ interface SpawnHeteroAgentRunLogger {
  * event, `rejected` on an early wrapper-process `error`. A missing target cwd
  * is handled inside `lh hetero exec`, which can classify it and emit
  * `heteroFinish`; other wrapper spawn failures flow back as rejected dispatches.
+ *
+ * Use when:
+ * - A connected device receives an authorized agent run from its gateway.
+ *
+ * Expects:
+ * - Request-scoped identity and credentials belong to this operation.
+ * - Native resume IDs identify the requested conversation, not the connector.
+ *
+ * Returns:
+ * - A spawn acknowledgement; execution output is delivered by the wrapper's ingest pipeline.
+ *
+ * Call stack:
+ *
+ * connect gateway agent_run_request
+ *   -> {@link spawnHeteroAgentRun}
+ *     -> lh hetero exec -> native agent CLI -> server ingest
+ *     -> {@link registerAgentRun} / {@link saveTask}
  */
 export function spawnHeteroAgentRun(
   params: SpawnHeteroAgentRunParams,
   logger?: SpawnHeteroAgentRunLogger,
 ): Promise<AgentRunAckResult> {
   const {
+    agentId,
     agentType,
     assistantMessageId,
     args: extraArgs,
@@ -143,6 +177,7 @@ export function spawnHeteroAgentRun(
       detached: true,
       env: {
         ...childEnv,
+        ...(agentId ? { LOBEHUB_AGENT_ID: agentId } : {}),
         ...(assistantMessageId ? { LOBEHUB_ASSISTANT_MESSAGE_ID: assistantMessageId } : {}),
         [HETERO_EXEC_INHERIT_PROCESS_GROUP_ENV]: '1',
         LOBEHUB_JWT: jwt,
@@ -165,6 +200,7 @@ export function spawnHeteroAgentRun(
       pid = child.pid;
       if (pid !== undefined) {
         saveTask({
+          agentId,
           agentType,
           operationId,
           pid,
