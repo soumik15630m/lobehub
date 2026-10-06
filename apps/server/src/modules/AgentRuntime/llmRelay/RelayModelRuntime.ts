@@ -111,6 +111,8 @@ export class RelayModelRuntime implements Pick<
       this.createStream(reader, payload, options).pipeThrough(
         createCallbacksTransformer(options.callback),
       ),
+      // Trace ids and the like, as every provider runtime sets them.
+      { headers: options.headers },
     );
   }
 
