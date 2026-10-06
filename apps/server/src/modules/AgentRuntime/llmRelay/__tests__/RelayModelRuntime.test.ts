@@ -472,6 +472,25 @@ describe('RelayModelRuntime non-chat methods', () => {
     ]);
   });
 
+  // The chat route hands trace headers in `options.headers`; every provider
+  // runtime sets them on its Response, and the browser stores the trace id
+  // with the message from there.
+  it('sets the response headers the caller hands to chat (trace ids)', async () => {
+    const { events, manager } = createStreamManager();
+    const runtime = createRuntime(manager);
+
+    const response = runtime.chat(payload, { headers: { 'x-lobe-chat-trace-id': 'trace-1' } });
+    const execute = await waitForExecute(events);
+    await post(execute.leaseToken, {
+      chunks: [],
+      clientId: 'tab-a',
+      final: { reason: 'done' },
+      seq: 1,
+    });
+
+    expect((await response).headers.get('x-lobe-chat-trace-id')).toBe('trace-1');
+  });
+
   it('keeps method off the chat dispatch, for executors that predate it', async () => {
     const { events, manager } = createStreamManager();
     const runtime = createRuntime(manager);
