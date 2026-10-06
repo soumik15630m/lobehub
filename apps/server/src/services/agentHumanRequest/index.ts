@@ -441,18 +441,19 @@ export class AgentHumanRequestService {
   private notify = async (item: AgentHumanRequestItem, staleMs = 0) => {
     if (!this.options.notifier) return;
 
-    const now = new Date(this.now());
-    const claimed = await this.model.claimNotification(item.id, now, staleMs);
-    if (!claimed?.notifyClaimId) return;
-
+    // Everything here, the claim included, runs after the action result is
+    // persisted: a failure is a delivery failure for redelivery to pick up,
+    // never an error on the decision that already succeeded.
     try {
+      const claimed = await this.model.claimNotification(item.id, new Date(this.now()), staleMs);
+      if (!claimed?.notifyClaimId) return;
+
       await this.options.notifier.notify(toAgentHumanRequestItem(claimed));
       await this.model.markNotified(item.id, claimed.notifyClaimId, new Date(this.now()));
     } catch (error) {
       console.error(
-        '[agentHumanRequest] waking the agent failed for %s (attempt %d), will retry:',
+        '[agentHumanRequest] waking the agent failed for %s, will retry:',
         item.id,
-        claimed.notifyAttempts,
         error,
       );
     }
@@ -466,10 +467,15 @@ export class AgentHumanRequestService {
   private redeliverOutcomes = async () => {
     if (!this.options.notifier) return;
 
-    const ids = await this.model.listUndelivered(new Date(this.now()), NOTIFY_REDELIVER_AFTER_MS);
-    for (const id of ids) {
-      const row = await this.model.findById(id);
-      if (row) await this.notify(toAgentHumanRequestItem(row), NOTIFY_REDELIVER_AFTER_MS);
+    // Best effort on a read path: a redelivery problem must not fail the read.
+    try {
+      const ids = await this.model.listUndelivered(new Date(this.now()), NOTIFY_REDELIVER_AFTER_MS);
+      for (const id of ids) {
+        const row = await this.model.findById(id);
+        if (row) await this.notify(toAgentHumanRequestItem(row), NOTIFY_REDELIVER_AFTER_MS);
+      }
+    } catch (error) {
+      console.error('[agentHumanRequest] outcome redelivery failed:', error);
     }
   };
 
