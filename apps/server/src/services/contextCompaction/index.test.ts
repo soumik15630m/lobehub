@@ -1,11 +1,13 @@
 import { RequestTrigger } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CompressionConflictError } from '@/database/repositories/compression';
+
 import { ContextCompactionService } from './index';
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
-  createCompressionGroup: vi.fn(),
+  claimCompressionGroup: vi.fn(),
   deleteCompressionGroup: vi.fn(),
   filterGroupIdsByThread: vi.fn(),
   finalizeCompressionGroup: vi.fn(),
@@ -20,9 +22,10 @@ vi.mock('@/server/services/message', () => ({
     queryMessages = mocks.queryMessages;
   },
 }));
-vi.mock('@/database/repositories/compression', () => ({
+vi.mock('@/database/repositories/compression', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   CompressionRepository: class {
-    createCompressionGroup = mocks.createCompressionGroup;
+    claimCompressionGroup = mocks.claimCompressionGroup;
     deleteCompressionGroup = mocks.deleteCompressionGroup;
     filterGroupIdsByThread = mocks.filterGroupIdsByThread;
     finalizeCompressionGroup = mocks.finalizeCompressionGroup;
@@ -68,7 +71,7 @@ describe('ContextCompactionService', () => {
     serveHistory(() => history);
     mocks.getAgentConfigById.mockResolvedValue({ model: 'gpt-5', provider: 'openai' });
     mocks.initModelRuntimeFromDB.mockResolvedValue({ chat: mocks.chat });
-    mocks.createCompressionGroup.mockResolvedValue('cg-new');
+    mocks.claimCompressionGroup.mockResolvedValue('cg-new');
     mocks.finalizeCompressionGroup.mockResolvedValue(undefined);
     mocks.deleteCompressionGroup.mockResolvedValue(undefined);
     mocks.filterGroupIdsByThread.mockImplementation(async (ids: string[]) => ids);
@@ -83,7 +86,7 @@ describe('ContextCompactionService', () => {
 
     expect(mocks.queryMessages).toHaveBeenCalledWith({ ...scope, before: undefined });
     // Only live rows move into the new group; the old group is folded in by summary.
-    expect(mocks.createCompressionGroup).toHaveBeenCalledWith({
+    expect(mocks.claimCompressionGroup).toHaveBeenCalledWith({
       content: '...',
       messageIds: ['msg-1', 'msg-2'],
       metadata: { originalMessageCount: 2 },
@@ -99,6 +102,7 @@ describe('ContextCompactionService', () => {
     expect(mocks.finalizeCompressionGroup).toHaveBeenCalledWith({
       content: 'New summary',
       groupId: 'cg-new',
+      requireSourceGroups: true,
       sourceGroupIds: ['cg-old'],
       topicId: 'topic-1',
     });
@@ -122,7 +126,7 @@ describe('ContextCompactionService', () => {
       topicId: 'topic-1',
     });
     // The thread read also returns its main-line parent; that stays on the main line.
-    expect(mocks.createCompressionGroup).toHaveBeenCalledWith(
+    expect(mocks.claimCompressionGroup).toHaveBeenCalledWith(
       expect.objectContaining({ messageIds: ['msg-t1'] }),
     );
     const prompt = JSON.stringify(mocks.chat.mock.calls[0][0].messages);
@@ -192,7 +196,7 @@ describe('ContextCompactionService', () => {
       { createdAt: new Date(3001), id: 'msg-1' },
       { createdAt: new Date(1000), id: 'msg-0a' },
     ]);
-    expect(mocks.createCompressionGroup.mock.calls[0][0].messageIds).toEqual([
+    expect(mocks.claimCompressionGroup.mock.calls[0][0].messageIds).toEqual([
       'msg-0a',
       'msg-0b',
       'msg-1',
@@ -211,7 +215,7 @@ describe('ContextCompactionService', () => {
     await expect(service.compact({ agentId: 'agent-1', topicId: 'topic-1' })).rejects.toThrow(
       'exceeds 20 history pages',
     );
-    expect(mocks.createCompressionGroup).not.toHaveBeenCalled();
+    expect(mocks.claimCompressionGroup).not.toHaveBeenCalled();
   });
 
   it('compacts a history that ends exactly on the page cap', async () => {
@@ -227,7 +231,7 @@ describe('ContextCompactionService', () => {
     const result = await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
 
     expect(result.skipped).toBe(false);
-    expect(mocks.createCompressionGroup.mock.calls[0][0].messageIds).toHaveLength(20);
+    expect(mocks.claimCompressionGroup.mock.calls[0][0].messageIds).toHaveLength(20);
   });
 
   it('skips when every message is already compacted', async () => {
@@ -237,7 +241,7 @@ describe('ContextCompactionService', () => {
     const result = await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
 
     expect(result).toEqual({ messages: [history[0]], skipped: true });
-    expect(mocks.createCompressionGroup).not.toHaveBeenCalled();
+    expect(mocks.claimCompressionGroup).not.toHaveBeenCalled();
     expect(mocks.chat).not.toHaveBeenCalled();
   });
 
@@ -248,7 +252,7 @@ describe('ContextCompactionService', () => {
     const result = await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
 
     expect(result.skipped).toBe(true);
-    expect(mocks.createCompressionGroup).not.toHaveBeenCalled();
+    expect(mocks.claimCompressionGroup).not.toHaveBeenCalled();
   });
 
   it('rolls the placeholder group back when the summary call fails', async () => {
@@ -323,5 +327,48 @@ describe('ContextCompactionService', () => {
 
     expect(mocks.deleteCompressionGroup).toHaveBeenCalledWith('cg-new');
     expect(mocks.finalizeCompressionGroup).not.toHaveBeenCalled();
+  });
+
+  describe('concurrent compaction of the same conversation', () => {
+    it('reports in-progress without summarizing when the messages were already claimed', async () => {
+      mocks.claimCompressionGroup.mockResolvedValue(null);
+      const service = new ContextCompactionService({} as never, 'user-1');
+
+      const result = await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
+
+      expect(result).toEqual({ inProgress: true, messages: history, skipped: true });
+      expect(mocks.chat).not.toHaveBeenCalled();
+      expect(mocks.finalizeCompressionGroup).not.toHaveBeenCalled();
+      expect(mocks.deleteCompressionGroup).not.toHaveBeenCalled();
+    });
+
+    it('rolls back and reports in-progress when another compaction finalized first', async () => {
+      mocks.finalizeCompressionGroup.mockRejectedValue(new CompressionConflictError());
+      const service = new ContextCompactionService({} as never, 'user-1');
+
+      const result = await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
+
+      expect(mocks.deleteCompressionGroup).toHaveBeenCalledWith('cg-new');
+      expect(result).toMatchObject({ inProgress: true, skipped: true });
+    });
+
+    it('never folds in a group whose summary another compaction is still writing', async () => {
+      serveHistory(() => [
+        { content: 'Earlier summary', id: 'cg-old', role: 'compressedGroup' },
+        { content: '...', id: 'cg-pending', role: 'compressedGroup' },
+        { content: 'Newer question', id: 'msg-3', role: 'user' },
+      ]);
+      const service = new ContextCompactionService({} as never, 'user-1');
+
+      await service.compact({ agentId: 'agent-1', topicId: 'topic-1' });
+
+      expect(mocks.filterGroupIdsByThread).toHaveBeenCalledWith(['cg-old'], {
+        threadId: undefined,
+        topicId: 'topic-1',
+      });
+      expect(mocks.finalizeCompressionGroup).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceGroupIds: ['cg-old'] }),
+      );
+    });
   });
 });

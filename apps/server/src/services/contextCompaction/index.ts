@@ -6,7 +6,11 @@ import type { UIChatMessage } from '@lobechat/types';
 import { RequestTrigger } from '@lobechat/types';
 import debug from 'debug';
 
-import { CompressionRepository } from '@/database/repositories/compression';
+import {
+  COMPRESSION_PLACEHOLDER_CONTENT,
+  CompressionConflictError,
+  CompressionRepository,
+} from '@/database/repositories/compression';
 import type { LobeChatDatabase } from '@/database/type';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { AgentService } from '@/server/services/agent';
@@ -73,6 +77,11 @@ export interface CompactContextParams {
 }
 
 export interface CompactContextResult {
+  /**
+   * Another compaction of the same conversation (e.g. a second tab) got there
+   * first; this call wrote nothing. Always paired with `skipped: true`.
+   */
+  inProgress?: boolean;
   messageGroupId?: string;
   messages: UIChatMessage[];
   /** Nothing left to compact, or the agent has no model to summarize with. */
@@ -88,6 +97,12 @@ export interface CompactContextResult {
  * earlier groups are folded into the prompt, and those earlier groups are
  * replaced atomically when the new summary is finalized. The summary model call
  * runs here, so the browser only triggers the operation and adopts the result.
+ *
+ * Concurrent compactions of one conversation (two tabs) are serialized in the
+ * database rather than by a lock held across the model call: messages are
+ * claimed only while still uncompressed, and the earlier groups are superseded
+ * only while they all still exist. The call that loses either race writes
+ * nothing and reports `inProgress`.
  */
 export class ContextCompactionService {
   private readonly agentService: AgentService;
@@ -114,7 +129,13 @@ export class ContextCompactionService {
 
     const messages = await this.queryFullHistory(scope);
 
-    const topicGroups = messages.filter((message) => message.role === 'compressedGroup');
+    // A group still holding the placeholder is another compaction in flight:
+    // folding it in would drop its members from the summary, so leave it to
+    // the call that owns it.
+    const topicGroups = messages.filter(
+      (message) =>
+        message.role === 'compressedGroup' && message.content !== COMPRESSION_PLACEHOLDER_CONTENT,
+    );
     // A thread read also returns the main-line parents it branched from; those
     // belong to the main line and must stay there, so only the thread's own
     // messages are compacted (and summarized) here.
@@ -153,12 +174,17 @@ export class ContextCompactionService {
     // Write through the repository: the MessageService wrappers re-read the list
     // after every write, outside this rollback, and their reads cover only the
     // newest page anyway. The summary comes from the full history collected above.
-    const messageGroupId = await this.compressionRepository.createCompressionGroup({
-      content: '...',
+    const messageGroupId = await this.compressionRepository.claimCompressionGroup({
+      content: COMPRESSION_PLACEHOLDER_CONTENT,
       messageIds,
       metadata: { originalMessageCount: messageIds.length },
       topicId,
     });
+
+    if (!messageGroupId) {
+      log('skip topic=%s: messages already claimed by a concurrent compaction', topicId);
+      return this.inProgress(scope);
+    }
 
     try {
       const summary = await this.summarizeInChunks({
@@ -176,6 +202,7 @@ export class ContextCompactionService {
       await this.compressionRepository.finalizeCompressionGroup({
         content: summary,
         groupId: messageGroupId,
+        requireSourceGroups: true,
         sourceGroupIds,
         topicId,
       });
@@ -194,8 +221,17 @@ export class ContextCompactionService {
         .catch((rollbackError) => {
           console.error('[ContextCompaction] rollback failed: %O', rollbackError);
         });
+      if (error instanceof CompressionConflictError) {
+        log('rolled back topic=%s: a concurrent compaction finalized first', topicId);
+        return this.inProgress(scope);
+      }
       throw error;
     }
+  }
+
+  private async inProgress(scope: CompactContextParams): Promise<CompactContextResult> {
+    const messages = await this.messageService.queryMessages(scope);
+    return { inProgress: true, messages, skipped: true };
   }
 
   /**

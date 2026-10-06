@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { MessageGroupType } from '@lobechat/types';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../core/getTestDB';
@@ -7,7 +8,7 @@ import { messageGroups, messages } from '../../schemas/message';
 import { threads, topics } from '../../schemas/topic';
 import { users } from '../../schemas/user';
 import type { LobeChatDatabase } from '../../type';
-import { CompressionRepository } from './index';
+import { CompressionConflictError, CompressionRepository } from './index';
 
 const userId = 'compression-test-user';
 const topicId = 'test-topic-1';
@@ -325,6 +326,152 @@ describe('CompressionRepository', () => {
           topicId,
         }),
       ).toEqual([mixedGroupId]);
+    });
+  });
+
+  describe('concurrent compaction of one conversation (two tabs)', () => {
+    const seedLive = async () => {
+      await serverDB.insert(messages).values([
+        { content: 'Q1', id: 'msg-1', role: 'user', topicId, userId },
+        { content: 'A1', id: 'msg-2', role: 'assistant', topicId, userId },
+      ]);
+    };
+    const groupOf = async (id: string) =>
+      (
+        await serverDB
+          .select({ messageGroupId: messages.messageGroupId })
+          .from(messages)
+          .where(eq(messages.id, id))
+      )[0]?.messageGroupId;
+
+    it('lets only one of two compactions that read the same history claim it', async () => {
+      await seedLive();
+      // Both tabs snapshot the same live ids before either writes.
+      const snapshot = ['msg-1', 'msg-2'];
+      const params = { content: '...', metadata: { originalMessageCount: 2 }, topicId };
+
+      const first = await compressionRepo.claimCompressionGroup({
+        ...params,
+        messageIds: snapshot,
+      });
+      const second = await compressionRepo.claimCompressionGroup({
+        ...params,
+        messageIds: snapshot,
+      });
+
+      expect(first).toEqual(expect.any(String));
+      expect(second).toBeNull();
+      // The losing claim leaves no empty group behind and steals no member.
+      const groups = await compressionRepo.getCompressionGroups(topicId);
+      expect(groups.map((group) => group.id)).toEqual([first]);
+      expect(await groupOf('msg-1')).toBe(first);
+      expect(await groupOf('msg-2')).toBe(first);
+    });
+
+    it('rejects a claim that overlaps only partly, without claiming the free rows', async () => {
+      await seedLive();
+      await serverDB
+        .insert(messages)
+        .values({ content: 'Q2', id: 'msg-3', role: 'user', topicId, userId });
+      const params = { content: '...', metadata: { originalMessageCount: 2 }, topicId };
+
+      const first = await compressionRepo.claimCompressionGroup({
+        ...params,
+        messageIds: ['msg-1', 'msg-2'],
+      });
+      const second = await compressionRepo.claimCompressionGroup({
+        ...params,
+        messageIds: ['msg-2', 'msg-3'],
+      });
+
+      expect(second).toBeNull();
+      expect(await groupOf('msg-2')).toBe(first);
+      expect(await groupOf('msg-3')).toBeNull();
+    });
+
+    it('serializes two claims issued at the same time', async () => {
+      await seedLive();
+      const params = { content: '...', metadata: { originalMessageCount: 2 }, topicId };
+
+      const results = await Promise.all([
+        compressionRepo.claimCompressionGroup({ ...params, messageIds: ['msg-1', 'msg-2'] }),
+        compressionRepo.claimCompressionGroup({ ...params, messageIds: ['msg-1', 'msg-2'] }),
+      ]);
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(await compressionRepo.getCompressionGroups(topicId)).toHaveLength(1);
+    });
+
+    it('leaves the plain createCompressionGroup used by the client path unconditional', async () => {
+      await seedLive();
+      const params = { content: '...', metadata: { originalMessageCount: 2 }, topicId };
+      await compressionRepo.createCompressionGroup({ ...params, messageIds: ['msg-1', 'msg-2'] });
+
+      const regrouped = await compressionRepo.createCompressionGroup({
+        ...params,
+        messageIds: ['msg-1', 'msg-2'],
+      });
+
+      expect(await groupOf('msg-1')).toBe(regrouped);
+    });
+
+    it('fails a strict finalize whose source group another compaction already superseded', async () => {
+      await seedLive();
+      await serverDB
+        .insert(messages)
+        .values({ content: 'Q2', id: 'msg-3', role: 'user', topicId, userId });
+      const oldGroup = await compressionRepo.createCompressionGroup({
+        content: 'Old summary',
+        messageIds: ['msg-1'],
+        metadata: { originalMessageCount: 1 },
+        topicId,
+      });
+      const groupA = (await compressionRepo.claimCompressionGroup({
+        content: '...',
+        messageIds: ['msg-2'],
+        metadata: { originalMessageCount: 1 },
+        topicId,
+      }))!;
+      const groupB = (await compressionRepo.claimCompressionGroup({
+        content: '...',
+        messageIds: ['msg-3'],
+        metadata: { originalMessageCount: 1 },
+        topicId,
+      }))!;
+
+      await compressionRepo.finalizeCompressionGroup({
+        content: 'Summary A',
+        groupId: groupA,
+        requireSourceGroups: true,
+        sourceGroupIds: [oldGroup],
+        topicId,
+      });
+
+      await expect(
+        compressionRepo.finalizeCompressionGroup({
+          content: 'Summary B',
+          groupId: groupB,
+          requireSourceGroups: true,
+          sourceGroupIds: [oldGroup],
+          topicId,
+        }),
+      ).rejects.toBeInstanceOf(CompressionConflictError);
+
+      // B's finalize wrote nothing: its group keeps the placeholder.
+      const groups = await compressionRepo.getCompressionGroups(topicId);
+      expect(groups.find((group) => group.id === groupB)?.content).toBe('...');
+      expect(await groupOf('msg-1')).toBe(groupA);
+    });
+
+    it('fails a strict finalize whose own group is gone', async () => {
+      await expect(
+        compressionRepo.finalizeCompressionGroup({
+          content: 'Summary',
+          groupId: 'missing-group',
+          requireSourceGroups: true,
+          topicId,
+        }),
+      ).rejects.toBeInstanceOf(CompressionConflictError);
     });
   });
 
