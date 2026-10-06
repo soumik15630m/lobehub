@@ -341,6 +341,33 @@ const resolveWorkspaceInit = async (
 };
 
 /**
+ * The retrieval query for relevant-memory injection.
+ *
+ * Normally the run's own prompt. Continuation runs (approval / tool-result
+ * resumes) and run-from-history runs execute with a blank `prompt`, and the
+ * memories the original turn injected lived only in the replaced operation's
+ * runtime state — so without a fallback every continuation would silently drop
+ * them. Re-deriving the query from the latest user message in the loaded
+ * history retrieves the same set the turn started with. `loadHistoryMessages`
+ * is the run's cached loader, so this costs no extra query.
+ */
+export const resolveMemoryQuery = async (
+  prompt: string,
+  loadHistoryMessages?: () => Promise<any[]>,
+): Promise<string> => {
+  if (prompt.trim() || !loadHistoryMessages) return prompt;
+
+  const history = await loadHistoryMessages();
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message?.role === 'user' && typeof message.content === 'string' && message.content.trim())
+      return message.content;
+  }
+
+  return prompt;
+};
+
+/**
  * Resolve the memory block a run injects into the context engine.
  *
  * Two sources, both fail-soft and independent — a broken persona lookup must
@@ -361,11 +388,15 @@ const resolveWorkspaceInit = async (
  */
 export const resolveInjectedUserMemory = async ({
   db,
+  loadHistoryMessages,
   prompt,
   spendOrigin,
   userId,
   workspaceId,
-}: FetchRelevantMemoryParams): Promise<ServerUserMemoryConfig | undefined> => {
+}: FetchRelevantMemoryParams & {
+  /** Fallback query source for a blank-prompt run — see {@link resolveMemoryQuery}. */
+  loadHistoryMessages?: () => Promise<any[]>;
+}): Promise<ServerUserMemoryConfig | undefined> => {
   const personaModel = new UserPersonaModel(db, userId);
 
   const [persona, relevantMemory] = await Promise.all([
@@ -374,10 +405,14 @@ export const resolveInjectedUserMemory = async ({
       return undefined;
     }),
     appEnv.ENABLE_RELEVANT_MEMORY_INJECTION
-      ? fetchRelevantMemory({ db, prompt, spendOrigin, userId, workspaceId }).catch((error) => {
-          log('execAgent: failed to fetch relevant memories: %O', error);
-          return undefined;
-        })
+      ? resolveMemoryQuery(prompt, loadHistoryMessages)
+          .then((query) =>
+            fetchRelevantMemory({ db, prompt: query, spendOrigin, userId, workspaceId }),
+          )
+          .catch((error) => {
+            log('execAgent: failed to fetch relevant memories: %O', error);
+            return undefined;
+          })
       : Promise.resolve(undefined),
   ]);
 
@@ -542,6 +577,7 @@ export const prepareOperation = async (
     try {
       userMemory = await resolveInjectedUserMemory({
         db: deps.db,
+        loadHistoryMessages,
         prompt,
         spendOrigin: shareGate
           ? {

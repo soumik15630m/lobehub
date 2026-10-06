@@ -25,7 +25,7 @@ vi.mock('../relevantMemory', () => ({
   fetchRelevantMemory: (...args: unknown[]) => fetchRelevantMemory(...args),
 }));
 
-const { resolveInjectedUserMemory } = await import('../operationPrep');
+const { resolveInjectedUserMemory, resolveMemoryQuery } = await import('../operationPrep');
 
 const persona = {
   persona: 'Arvin ships LobeHub releases daily.',
@@ -35,7 +35,7 @@ const persona = {
 
 const relevant = {
   contexts: [{ description: 'works on the personal agent goal', id: 'ctx-1', title: 'Project' }],
-  experiences: [{ id: 'exp-1', keyLearning: 'prefer rebase over merge', situation: 'git' }],
+  experiences: [],
   identities: [
     { description: 'ships weekly', id: 'idn-1', role: 'engineer', type: 'professional' },
   ],
@@ -136,5 +136,74 @@ describe('resolveInjectedUserMemory', () => {
     fetchRelevantMemory.mockResolvedValue(undefined);
 
     await expect(call()).resolves.toBeUndefined();
+  });
+});
+
+describe('relevant-memory query for continuation runs', () => {
+  const history = [
+    { content: 'what did I decide about the release cadence?', role: 'user' },
+    { content: 'Let me check.', role: 'assistant' },
+    { content: '{"ok":true}', role: 'tool' },
+  ];
+
+  beforeEach(() => {
+    appEnvMock.ENABLE_RELEVANT_MEMORY_INJECTION = true;
+    getLatestPersonaDocument.mockReset().mockResolvedValue(undefined);
+    fetchRelevantMemory.mockReset().mockResolvedValue(relevant);
+  });
+
+  it('keeps the injected memories on a blank-prompt approval / tool-result resume', async () => {
+    const memory = await resolveInjectedUserMemory({
+      db: {} as never,
+      loadHistoryMessages: async () => history,
+      prompt: '',
+      userId: 'user-1',
+    });
+
+    expect(fetchRelevantMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'what did I decide about the release cadence?' }),
+    );
+    expect(memory?.memories?.contexts).toEqual(relevant.contexts);
+  });
+
+  it('does not touch history while the switch is off', async () => {
+    appEnvMock.ENABLE_RELEVANT_MEMORY_INJECTION = false;
+    const loadHistoryMessages = vi.fn(async () => history);
+
+    await resolveInjectedUserMemory({
+      db: {} as never,
+      loadHistoryMessages,
+      prompt: '',
+      userId: 'user-1',
+    });
+
+    expect(loadHistoryMessages).not.toHaveBeenCalled();
+  });
+
+  it('uses the run prompt as-is when there is one, without loading history', async () => {
+    const loadHistoryMessages = vi.fn(async () => history);
+
+    await expect(resolveMemoryQuery('new question', loadHistoryMessages)).resolves.toBe(
+      'new question',
+    );
+    expect(loadHistoryMessages).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the latest non-blank user message', async () => {
+    await expect(
+      resolveMemoryQuery('  ', async () => [
+        { content: 'older question', role: 'user' },
+        { content: 'answer', role: 'assistant' },
+        { content: 'latest question', role: 'user' },
+        { content: '   ', role: 'user' },
+        { content: '', role: 'assistant' },
+      ]),
+    ).resolves.toBe('latest question');
+  });
+
+  it('stays blank when history has no user text', async () => {
+    await expect(
+      resolveMemoryQuery('', async () => [{ content: 'hi', role: 'assistant' }]),
+    ).resolves.toBe('');
   });
 });
