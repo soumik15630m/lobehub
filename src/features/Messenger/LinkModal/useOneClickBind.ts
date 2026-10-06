@@ -6,6 +6,14 @@ import { messengerService } from '@/services/messenger';
 
 export const ONE_CLICK_BIND_POLL_INTERVAL_MS = 2000;
 
+/**
+ * Each mounted modal gets its own bind. A bind is one-shot (its code or OAuth
+ * link is spent once it settles), so reopening the modal — e.g. "Add
+ * workspace" after a Slack bind — must mint a new one rather than replay the
+ * cached Connected / Expired result of the previous modal.
+ */
+let mountSeq = 0;
+
 export type OneClickBindPlatform = 'discord' | 'slack' | 'telegram';
 
 /**
@@ -16,10 +24,11 @@ export type OneClickBindPlatform = 'discord' | 'slack' | 'telegram';
  */
 export const useOneClickBind = (platform: OneClickBindPlatform, locale: string) => {
   const { mutate } = useSWRConfig();
+  const [mountId] = useState(() => ++mountSeq);
   const [attempt, setAttempt] = useState(0);
 
   const start = useSWR(
-    messengerKeys.startBind(platform, attempt),
+    messengerKeys.startBind(platform, mountId, attempt),
     () => messengerService.startBind({ locale, platform }),
     {
       revalidateIfStale: false,

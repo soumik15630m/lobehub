@@ -1084,9 +1084,10 @@ export const messengerKeys = {
     platform,
     tenantId ?? null,
   ]),
-  startBind: def('messenger:startBind', (platform: string, attempt: number) => [
+  startBind: def('messenger:startBind', (platform: string, mountId: number, attempt: number) => [
     'messenger:startBind',
     platform,
+    mountId,
     attempt,
   ]),
 };
