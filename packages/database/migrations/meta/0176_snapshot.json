@@ -4249,9 +4249,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "frozen_payload_key": {
-          "name": "frozen_payload_key",
-          "type": "text",
+        "frozen_call": {
+          "name": "frozen_call",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

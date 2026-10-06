@@ -29,7 +29,7 @@ import {
 
 const compressZstd = promisify(zstdCompress);
 
-// In-memory S3: trace snapshots are read from it, frozen calls written to it.
+// In-memory S3: trace snapshots are read from it. Frozen calls never touch it.
 const s3Objects = new Map<string, Uint8Array>();
 vi.mock('@/server/modules/S3', () => ({
   FileS3: vi.fn(function () {
@@ -125,6 +125,8 @@ beforeEach(async () => {
     .values({
       content: '你是科创中心宋清扬',
       metadata: { operationId },
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
       role: 'assistant',
       topicId,
       userId,
@@ -201,14 +203,22 @@ describe('freezeFromMessage', () => {
     // Negative capture: the bad answer must not become the expected answer.
     expect(testCase.content.expected).toBeUndefined();
 
-    const frozenKey = testCase.frozenPayloadKey!;
-    expect(frozenKey).toBe(`eval-frozen/${userId}/${assistantMessageId}-0.json.zst`);
-    expect(s3Objects.has(frozenKey)).toBe(true);
+    // The call is stored on the row itself: messages, tools, original model.
+    expect(testCase.frozenCall).toMatchObject({
+      messages: FROZEN_MESSAGES,
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      stepIndex: 0,
+      tools: FROZEN_TOOLS,
+    });
+    expect(testCase.frozenCall?.frozenAt).toEqual(expect.any(String));
+    // Nothing besides the source trace lives in S3.
+    expect([...s3Objects.keys()]).toEqual([traceKey]);
   });
 
   it('stays replayable after the trace object is gone', async () => {
     const { testCase } = await freeze();
-    s3Objects.delete(traceKey);
+    s3Objects.clear();
 
     chat.mockResolvedValue(completion('Arvin，你好'));
     generateObject.mockResolvedValue({ reason: 'ok', score: 1 });
@@ -301,6 +311,63 @@ describe('freezeFromMessage', () => {
         messageId: assistantMessageId,
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Message not found' });
+  });
+});
+
+describe('draftCriteria', () => {
+  const draft = {
+    criteria: 'Background: the user is Arvin. Fail: calls the user 宋清扬.',
+    expected: '',
+    summary: 'Mistook the user for 宋清扬',
+  };
+
+  it('drafts from the frozen call with the eval scenario and saves nothing', async () => {
+    generateObject.mockResolvedValue(draft);
+
+    const result = await service().draftCriteria({
+      locale: 'zh-CN',
+      messageId: assistantMessageId,
+      note: '他把我当成宋清扬了',
+    });
+
+    expect(result).toMatchObject({
+      criteria: draft.criteria,
+      expected: undefined,
+      summary: draft.summary,
+    });
+    expect(result.model).toEqual(expect.any(String));
+
+    const [payload, options] = generateObject.mock.calls[0];
+    expect(payload.schema.name).toBe('eval_criteria_draft');
+    // The drafter reads the conversation the judge will never see…
+    const userPrompt = payload.messages[1].content as string;
+    expect(userPrompt).toContain('我是科创中心宋清扬');
+    expect(userPrompt).toContain('你是科创中心宋清扬');
+    expect(userPrompt).toContain('他把我当成宋清扬了');
+    // …and is told the judge cannot see it.
+    expect(payload.messages[0].content).toContain('never sees the system prompt');
+    expect(options.tracing).toMatchObject({
+      promptVersion: 'v1',
+      scenario: 'eval_criteria_draft',
+      schemaName: 'eval_criteria_draft',
+    });
+    expect(await serverDB.select().from(agentEvalTestCases)).toHaveLength(0);
+  });
+
+  it('rejects a draft that does not match the schema', async () => {
+    generateObject.mockResolvedValue({ criteria: '' });
+
+    await expect(service().draftCriteria({ messageId: assistantMessageId })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  });
+
+  it('needs a recorded call to draft from', async () => {
+    s3Objects.delete(traceKey);
+
+    await expect(service().draftCriteria({ messageId: assistantMessageId })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
   });
 });
 

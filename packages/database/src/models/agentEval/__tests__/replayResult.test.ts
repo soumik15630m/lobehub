@@ -211,7 +211,7 @@ describe('AgentEvalTestCaseModel provenance', () => {
     const created = await testCaseModel.create({
       content: { input: 'who am I?' },
       datasetId,
-      frozenPayloadKey: 'eval-frozen/u/m-1.json.zst',
+      frozenCall: { frozenAt: '2026-10-07T00:00:00.000Z', messages: [], stepIndex: 1 },
       frozenStepIndex: 1,
       sourceMessageId: message.id,
       sourceOperationId: 'op_1',
@@ -221,7 +221,7 @@ describe('AgentEvalTestCaseModel provenance', () => {
     const found = await testCaseModel.findByDatasetIdAndSourceMessageId(datasetId, message.id);
     expect(found?.id).toBe(created.id);
     expect(found).toMatchObject({
-      frozenPayloadKey: 'eval-frozen/u/m-1.json.zst',
+      frozenCall: { frozenAt: '2026-10-07T00:00:00.000Z', messages: [], stepIndex: 1 },
       frozenStepIndex: 1,
       sourceOperationId: 'op_1',
       sourceTopicId: topic.id,
@@ -231,7 +231,7 @@ describe('AgentEvalTestCaseModel provenance', () => {
     expect(await stranger.findByDatasetIdAndSourceMessageId(datasetId, message.id)).toBeUndefined();
   });
 
-  it('keeps the case (and its frozen payload key) when the source message is deleted', async () => {
+  it('keeps the case (and its inline frozen call) when the source message is deleted', async () => {
     const [topic] = await serverDB.insert(topics).values({ title: 't', userId }).returning();
     const [message] = await serverDB
       .insert(messages)
@@ -241,7 +241,11 @@ describe('AgentEvalTestCaseModel provenance', () => {
     const created = await testCaseModel.create({
       content: { input: 'q' },
       datasetId,
-      frozenPayloadKey: 'eval-frozen/u/k.json.zst',
+      frozenCall: {
+        frozenAt: '2026-10-07T00:00:00.000Z',
+        messages: [{ role: 'user' }],
+        stepIndex: 0,
+      },
       sourceMessageId: message.id,
       sourceTopicId: topic.id,
     });
@@ -251,7 +255,7 @@ describe('AgentEvalTestCaseModel provenance', () => {
 
     const after = await testCaseModel.findById(created.id);
     expect(after).toMatchObject({
-      frozenPayloadKey: 'eval-frozen/u/k.json.zst',
+      frozenCall: { messages: [{ role: 'user' }], stepIndex: 0 },
       sourceMessageId: null,
       sourceTopicId: null,
     });

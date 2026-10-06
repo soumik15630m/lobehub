@@ -125,6 +125,17 @@ const resetResumedThreadResult = (thread: EvalThreadResult): EvalThreadResult =>
   status: thread.status === 'external' ? 'external' : 'running',
 });
 
+/**
+ * The `execAgent` model override a run's subject model maps to. Empty when the
+ * run evaluates the agent on its own configured model.
+ */
+export const subjectOverride = (
+  config: Pick<EvalRunConfig, 'subjectModel' | 'subjectProvider'> | null | undefined,
+): { model?: string; provider?: string } =>
+  config?.subjectModel && config?.subjectProvider
+    ? { model: config.subjectModel, provider: config.subjectProvider }
+    : {};
+
 export class AgentEvalRunService {
   private readonly db: LobeChatDatabase;
   private readonly userId: string;
@@ -215,7 +226,14 @@ export class AgentEvalRunService {
     }
 
     // Re-snapshot the current agent config (forks capture the *current* state).
-    const agentSnapshot = targetAgentId ? await this.snapshotAgentConfig(targetAgentId) : undefined;
+    const capturedSnapshot = targetAgentId
+      ? await this.snapshotAgentConfig(targetAgentId)
+      : undefined;
+    // The snapshot records what the run executes, so a subject model replaces
+    // the agent's own one there rather than living beside it.
+    const subject = subjectOverride(inputConfig);
+    const agentSnapshot =
+      capturedSnapshot && subject.model ? { ...capturedSnapshot, ...subject } : capturedSnapshot;
 
     // Persist the execution mode as an immutable snapshot: a run's mode cannot
     // be inferred from status once the run reaches a terminal state, and the
@@ -856,12 +874,14 @@ export class AgentEvalRunService {
     const webhookUrl = '/api/workflows/agent-eval-run/on-trajectory-complete';
     const userId = this.userId;
     const db = this.db;
+    const subject = subjectOverride((await this.runModel.findById(runId))?.config);
 
     try {
       const execResult = await aiAgentService.execAgent({
         agentId: targetAgentId,
         appContext,
         autoStart: true,
+        ...subject,
         trigger: RequestTrigger.Eval,
         hooks: [
           {
@@ -1002,12 +1022,14 @@ export class AgentEvalRunService {
     const webhookUrl = '/api/workflows/agent-eval-run/on-thread-complete';
     const userId = this.userId;
     const db = this.db;
+    const subject = subjectOverride((await this.runModel.findById(runId))?.config);
 
     try {
       const execResult = await aiAgentService.execAgent({
         agentId: targetAgentId,
         appContext,
         autoStart: true,
+        ...subject,
         trigger: RequestTrigger.Eval,
         hooks: [
           {
@@ -1328,6 +1350,7 @@ export class AgentEvalRunService {
         agentId: run.targetAgentId ?? undefined,
         appContext: { topicId },
         autoStart: true,
+        ...subjectOverride(run.config),
         ...(params.deviceId && { deviceId: params.deviceId }),
         trigger: RequestTrigger.Eval,
         hooks: [
@@ -1607,6 +1630,7 @@ export class AgentEvalRunService {
         agentId: run.targetAgentId ?? undefined,
         appContext: { threadId, topicId },
         autoStart: true,
+        ...subjectOverride(run.config),
         trigger: RequestTrigger.Eval,
         hooks: [
           {

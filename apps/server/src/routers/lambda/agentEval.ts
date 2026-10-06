@@ -1,6 +1,7 @@
 import { parseDataset } from '@lobechat/eval-dataset-parser';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
+import pMap from 'p-map';
 import { z } from 'zod';
 
 import { withScopedPermission } from '@/business/server/trpc-middlewares/rbacPermission';
@@ -21,7 +22,7 @@ import { FileService } from '@/server/services/file';
 import { FileUploadService } from '@/server/services/fileUpload';
 import { AgentEvalRunWorkflow } from '@/server/workflows/agentEvalRun';
 
-import { evalRunInputConfigSchema } from './evalRunConfig.schema';
+import { evalRunInputConfigSchema, evalRunSubjectSchema } from './evalRunConfig.schema';
 
 const rubricTypeSchema = z.enum([
   'equals',
@@ -774,7 +775,15 @@ export const agentEvalRouter = router({
         ctx.testCaseModel.findByDatasetId(input.datasetId, input.limit, input.offset),
         ctx.testCaseModel.countByDatasetId(input.datasetId),
       ]);
-      return { data, total };
+      // A frozen call carries the whole prompt and tool set — tens of KB per
+      // case — so lists only say whether one exists; `getTestCase` returns it.
+      return {
+        data: data.map(({ frozenCall, ...testCase }) => ({
+          ...testCase,
+          hasFrozenCall: !!frozenCall,
+        })),
+        total,
+      };
     }),
 
   // ============================================
@@ -799,6 +808,23 @@ export const agentEvalRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => ctx.replayService.freezeFromMessage(input)),
+
+  /**
+   * Have a model draft the self-contained criteria for freezing a message.
+   * Saves nothing — the user edits the draft and confirms through
+   * `freezeTestCaseFromMessage`.
+   */
+  draftTestCaseCriteria: agentEvalProcedureWrite
+    .input(
+      z.object({
+        capturedOutputKind: z.enum(['negative', 'positive']).optional(),
+        locale: z.string().optional(),
+        messageId: z.string(),
+        note: z.string().max(2000).optional(),
+        stepIndex: z.number().int().min(0).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => ctx.replayService.draftCriteria(input)),
 
   /**
    * Re-issue every frozen case of a dataset (or the given cases) against 1–8
@@ -839,6 +865,38 @@ export const agentEvalRouter = router({
   // ============================================
   // Run Operations
   // ============================================
+  /**
+   * Evaluate one agent on several models: one run per subject model, each
+   * overriding the agent's own model, so a model comparison never needs a
+   * cloned agent per model. Runs are created idle; start them with `startRun`.
+   */
+  createSubjectRuns: agentEvalProcedureWrite
+    .input(
+      z.object({
+        config: evalRunInputConfigSchema.optional(),
+        datasetId: z.string(),
+        experimentId: z.string().optional(),
+        name: z.string().optional(),
+        subjects: z.array(evalRunSubjectSchema).min(1).max(8),
+        targetAgentId: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { config, name, subjects, ...rest } = input;
+      const unique = [...new Map(subjects.map((s) => [`${s.provider}/${s.model}`, s])).values()];
+
+      return pMap(
+        unique,
+        (subject) =>
+          ctx.runService.createRun({
+            ...rest,
+            config: { ...config, subjectModel: subject.model, subjectProvider: subject.provider },
+            name: name ? `${name} · ${subject.model}` : subject.model,
+          }),
+        { concurrency: 2 },
+      );
+    }),
+
   createRun: agentEvalProcedureWrite
     .input(
       z.object({
@@ -1299,11 +1357,25 @@ export const agentEvalRouter = router({
       // Config fields can be updated anytime (except when completed)
       if (updates.config) {
         const existingConfig = (run.config as Record<string, unknown>) ?? {};
+        // The subject model decides what the run measures, so like the agent
+        // and dataset it only changes before the run starts.
         const configPatch = Object.fromEntries(
-          Object.entries(updates.config).filter(([, v]) => v !== undefined),
+          Object.entries(updates.config).filter(
+            ([key, v]) =>
+              v !== undefined &&
+              (canChangeConfig || (key !== 'subjectModel' && key !== 'subjectProvider')),
+          ),
         );
         if (Object.keys(configPatch).length > 0) {
           value.config = { ...existingConfig, ...configPatch };
+          const snapshot = existingConfig.agentSnapshot as Record<string, unknown> | undefined;
+          if (snapshot && configPatch.subjectModel && configPatch.subjectProvider) {
+            value.config.agentSnapshot = {
+              ...snapshot,
+              model: configPatch.subjectModel,
+              provider: configPatch.subjectProvider,
+            };
+          }
         }
       }
 
