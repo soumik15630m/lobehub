@@ -1,3 +1,7 @@
+import type * as ChildProcessModule from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+
 import type * as DeviceControlModule from '@lobechat/device-control';
 import { GatewayClient } from '@lobechat/device-gateway-client';
 import { Command } from 'commander';
@@ -6,12 +10,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RefreshModule from '../auth/refresh';
 import { resolveToken } from '../auth/resolveToken';
 import { removeStatus, spawnDaemon, stopDaemon, writeStatus } from '../daemon/manager';
+import type * as TaskRegistryModule from '../daemon/taskRegistry';
+import { saveTask } from '../daemon/taskRegistry';
 import type * as DeviceRegister from '../device/register';
 import { loadSettings, saveSettings } from '../settings';
 import { executeToolCall } from '../tools';
 import { cleanupAllProcesses } from '../tools/shell';
 import { log, setVerbose } from '../utils/logger';
 import { registerConnectCommand } from './connect';
+
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChildProcessModule>()),
+  spawn: vi.fn(),
+}));
+vi.mock('../daemon/taskRegistry', async (importOriginal) => ({
+  ...(await importOriginal<typeof TaskRegistryModule>()),
+  saveTask: vi.fn(),
+}));
 
 const registerDeviceMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
@@ -122,6 +137,7 @@ vi.mock('@lobechat/device-gateway-client', () => ({
       }),
       reconnect: vi.fn().mockResolvedValue(undefined),
       reportMetrics: clientReportMetrics,
+      sendAgentRunAck: vi.fn(),
       sendSystemInfoResponse: vi.fn().mockImplementation((data: any) => {
         lastSentSystemInfoResponse = data;
       }),
@@ -158,6 +174,7 @@ describe('connect command', () => {
     }
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function createProgram() {
@@ -166,6 +183,133 @@ describe('connect command', () => {
     registerConnectCommand(program);
     return program;
   }
+
+  /** @example Two topics dispatched through one connector retain their own shell provenance. */
+  it('isolates dispatched provenance across overlapping runs and a native continuation', async () => {
+    // ROOT CAUSE:
+    //
+    // The gateway already carries agentId, but connect omitted it when building
+    // the spawn request. The wrapper also removed ambient LOBEHUB_AGENT_ID
+    // without replacing it, so a real Codex shell could not identify its agent.
+    // Carry the dispatched identity through both boundaries without mutating
+    // the connector environment or another still-running operation.
+    vi.stubEnv('LOBEHUB_AGENT_ID', 'connector-launcher');
+    const childA = Object.assign(new EventEmitter(), {
+      pid: 51001,
+      stdin: { end: vi.fn(), write: vi.fn() },
+    });
+    const childB = Object.assign(new EventEmitter(), {
+      pid: 51002,
+      stdin: { end: vi.fn(), write: vi.fn() },
+    });
+    const resumed = Object.assign(new EventEmitter(), {
+      pid: 51003,
+      stdin: { end: vi.fn(), write: vi.fn() },
+    });
+    // The OS spawn boundary is replaced; the gateway handler, request mapping,
+    // wrapper arguments and environment construction all run unchanged.
+    vi.mocked(spawn)
+      .mockReturnValueOnce(childA as ReturnType<typeof spawn>)
+      .mockReturnValueOnce(childB as ReturnType<typeof spawn>)
+      .mockReturnValueOnce(resumed as ReturnType<typeof spawn>);
+    const program = createProgram();
+    await program.parseAsync(['node', 'test', 'connect']);
+    const requestA = {
+      agentId: 'agent-a',
+      agentType: 'codex',
+      assistantMessageId: 'message-a',
+      cwd: process.cwd(),
+      ingestWorkspaceId: 'topic-workspace',
+      jwt: 'run-a-token',
+      operationId: 'operation-a',
+      prompt: 'print provenance',
+      topicId: 'topic-a',
+      type: 'agent_run_request',
+      workspaceId: 'device-pool',
+    };
+    const runningA = clientEventHandlers.agent_run_request(requestA);
+    const runningB = clientEventHandlers.agent_run_request({
+      ...requestA,
+      agentId: 'agent-b',
+      assistantMessageId: 'message-b',
+      jwt: 'run-b-token',
+      operationId: 'operation-b',
+      topicId: 'topic-b',
+    });
+    childA.emit('spawn');
+    childB.emit('spawn');
+    await Promise.all([runningA, runningB]);
+    childA.emit('exit', 0, null);
+    const continuingA = clientEventHandlers.agent_run_request({
+      ...requestA,
+      jwt: 'run-a-next-token',
+      operationId: 'operation-a-next',
+      resumeSessionId: 'native-a',
+    });
+    resumed.emit('spawn');
+    await continuingA;
+
+    /** @example Dispatch leaves the connector launcher's identity unchanged. */
+    expect(process.env.LOBEHUB_AGENT_ID).toBe('connector-launcher');
+    const calls = vi.mocked(spawn).mock.calls;
+    childB.emit('exit', 0, null);
+    resumed.emit('exit', 0, null);
+    /** @example A and B use separate process groups and immutable per-request identity. */
+    expect(
+      calls.map((call) => ({
+        detached: call[2]?.detached,
+        env: Object.fromEntries(
+          ['AGENT', 'OPERATION', 'TOPIC', 'WORKSPACE'].map((key) => [
+            `LOBEHUB_${key}_ID`,
+            call[2]?.env?.[`LOBEHUB_${key}_ID`],
+          ]),
+        ),
+      })),
+    ).toEqual([
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({
+          LOBEHUB_AGENT_ID: 'agent-a',
+          LOBEHUB_OPERATION_ID: 'operation-a',
+          LOBEHUB_TOPIC_ID: 'topic-a',
+          LOBEHUB_WORKSPACE_ID: 'topic-workspace',
+        }),
+      }),
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({
+          LOBEHUB_AGENT_ID: 'agent-b',
+          LOBEHUB_OPERATION_ID: 'operation-b',
+          LOBEHUB_TOPIC_ID: 'topic-b',
+          LOBEHUB_WORKSPACE_ID: 'topic-workspace',
+        }),
+      }),
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({
+          LOBEHUB_AGENT_ID: 'agent-a',
+          LOBEHUB_OPERATION_ID: 'operation-a-next',
+          LOBEHUB_TOPIC_ID: 'topic-a',
+          LOBEHUB_WORKSPACE_ID: 'topic-workspace',
+        }),
+      }),
+    ]);
+    /** @example A continuation retains native-a while receiving operation-a-next. */
+    expect(calls[2][1]).toEqual(expect.arrayContaining(['--resume', 'native-a']));
+    /** @example Cancellation/reconnect lookup retains the same operation-to-agent ownership. */
+    expect(
+      vi.mocked(saveTask).mock.calls.map(([task]) => ({
+        agentId: task.agentId,
+        operationId: task.operationId,
+        pid: task.pid,
+        topicId: task.topicId,
+      })),
+    ).toEqual([
+      { agentId: 'agent-a', operationId: 'operation-a', pid: 51001, topicId: 'topic-a' },
+      { agentId: 'agent-b', operationId: 'operation-b', pid: 51002, topicId: 'topic-b' },
+      { agentId: 'agent-a', operationId: 'operation-a-next', pid: 51003, topicId: 'topic-a' },
+    ]);
+  });
 
   it('should persist deviceId in status for foreground connections', async () => {
     const program = createProgram();
