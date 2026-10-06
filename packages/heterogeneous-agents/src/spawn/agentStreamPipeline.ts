@@ -36,6 +36,8 @@ export interface AgentStreamPipelineOptions {
   initialCumulativeUsage?: UsageData | undefined;
   /** Host-known model to emit before the CLI's first stdout payload. */
   initialModel?: string | undefined;
+  /** Claude Code session's cumulative cost before a resumed run starts. */
+  initialSessionCostUsd?: number | undefined;
   /** Operation id to stamp onto every emitted `AgentStreamEvent`. */
   operationId: string;
   /**
@@ -75,10 +77,15 @@ export class AgentStreamPipeline {
     this.codexTracker =
       options.agentType === 'codex' ? new CodexFileChangeTracker(options.cwd) : undefined;
 
-    if (options.initialModel || options.initialCumulativeUsage) {
+    if (
+      options.initialModel ||
+      options.initialCumulativeUsage ||
+      options.initialSessionCostUsd !== undefined
+    ) {
       this.queuedEvents.push(
         ...this.configureSession({
           initialCumulativeUsage: options.initialCumulativeUsage,
+          initialSessionCostUsd: options.initialSessionCostUsd,
           model: options.initialModel,
         }),
       );
@@ -113,6 +120,7 @@ export class AgentStreamPipeline {
 
   configureSession(data: {
     initialCumulativeUsage?: UsageData | undefined;
+    initialSessionCostUsd?: number | undefined;
     model?: string | undefined;
   }): AgentStreamEvent[] {
     return this.toStreamEvents(

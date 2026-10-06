@@ -92,6 +92,7 @@ import {
   isDevinAcpSessionNotFoundError,
   isDroidAcpSessionNotFoundError,
   normalizeImage,
+  readClaudeCodeSessionCost,
   readCodexSessionModel,
   resolveClaudeCodeTranscriptPath,
   resolveCliSpawnPlan,
@@ -1893,6 +1894,7 @@ export default class HeterogeneousAgentCtr {
     let traceSession;
     let cwd: string;
     let initialCumulativeUsage: UsageData | undefined;
+    let initialSessionCostUsd: number | undefined;
     let resolvedCliSpawnPlan;
     let spawnEnv: NodeJS.ProcessEnv;
     try {
@@ -1953,6 +1955,14 @@ export default class HeterogeneousAgentCtr {
             await readCodexSessionModel(session.agentSessionId, { env: spawnEnv })
           )?.cumulativeUsage;
         }
+      }
+
+      if (session.agentType === 'claude-code' && session.agentSessionId) {
+        initialSessionCostUsd = await readClaudeCodeSessionCost({
+          configDir: spawnEnv.CLAUDE_CONFIG_DIR ?? session.hostedProviderBinding?.profileDir,
+          cwd,
+          sessionId: session.agentSessionId,
+        });
       }
 
       traceSession = await this.createCliTraceSession({
@@ -2030,6 +2040,7 @@ export default class HeterogeneousAgentCtr {
           resolve,
           session,
           initialCumulativeUsage,
+          initialSessionCostUsd,
           spawnEnv,
           startedAt,
           traceSession,
@@ -2088,6 +2099,7 @@ export default class HeterogeneousAgentCtr {
     const sdkSession = new ClaudeAgentSdkSession({
       args: session.args,
       commandPath,
+      configDir: spawnEnv.CLAUDE_CONFIG_DIR ?? session.hostedProviderBinding?.profileDir,
       cwd,
       env: spawnEnv,
       onEvents: async (events) => {
@@ -3149,6 +3161,7 @@ export default class HeterogeneousAgentCtr {
   private handleSpawnedAgentProcess({
     cwd,
     initialCumulativeUsage,
+    initialSessionCostUsd,
     intervention,
     params,
     proc,
@@ -3169,6 +3182,7 @@ export default class HeterogeneousAgentCtr {
     resolve: () => void;
     session: AgentSession;
     initialCumulativeUsage?: UsageData | undefined;
+    initialSessionCostUsd?: number | undefined;
     spawnEnv: NodeJS.ProcessEnv;
     spawnPlan: HeterogeneousAgentBuildPlan;
     /** ISO time taken before the spawn — see `recordInflightRun`. */
@@ -3226,6 +3240,7 @@ export default class HeterogeneousAgentCtr {
       cwd,
       initialCumulativeUsage,
       initialModel: session.model,
+      initialSessionCostUsd,
       operationId: params.operationId,
       uploadImage: this.uploadResultImage,
     });
