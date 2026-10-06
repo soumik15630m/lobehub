@@ -116,6 +116,35 @@ describe('useOneClickBind', () => {
     expect(messengerServiceMocks.pollBind).not.toHaveBeenCalled();
   });
 
+  it('mints a fresh bind when the modal is reopened after a settled bind', async () => {
+    messengerServiceMocks.startBind
+      .mockResolvedValueOnce(deeplinkStart('poll-first'))
+      .mockResolvedValueOnce(deeplinkStart('poll-second'));
+    messengerServiceMocks.pollBind.mockResolvedValue({
+      link: { id: 'link-1' },
+      linkedAt: 1,
+      platform: 'telegram',
+      platformUserId: '42',
+      status: 'linked',
+    });
+    // One SWR cache shared by both mounts, like the app-level provider.
+    const cache = new Map();
+    const sharedWrapper = ({ children }: { children: ReactNode }) =>
+      createElement(SWRConfig, { value: { dedupingInterval: 0, provider: () => cache } }, children);
+
+    const first = renderHook(() => useOneClickBind('telegram', 'en-US'), {
+      wrapper: sharedWrapper,
+    });
+    await waitFor(() => expect(first.result.current.status).toBe('linked'));
+    first.unmount();
+
+    const second = renderHook(() => useOneClickBind('telegram', 'en-US'), {
+      wrapper: sharedWrapper,
+    });
+    await waitFor(() => expect(second.result.current.start?.pollId).toBe('poll-second'));
+    expect(messengerServiceMocks.startBind).toHaveBeenCalledTimes(2);
+  });
+
   it('mints a fresh bind on retry', async () => {
     messengerServiceMocks.startBind
       .mockResolvedValueOnce(deeplinkStart('poll-1'))
