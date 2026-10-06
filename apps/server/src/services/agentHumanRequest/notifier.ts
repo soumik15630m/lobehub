@@ -1,7 +1,9 @@
 import { RequestTrigger } from '@lobechat/types';
 
+import { TopicModel } from '@/database/models/topic';
 import type { LobeChatDatabase } from '@/database/type';
 import { AiAgentService } from '@/server/services/aiAgent';
+import { TopicStartReservationError } from '@/server/services/aiAgent/topicStartReservation';
 
 import type { AgentHumanRequestNotifier } from './index';
 import { buildOutcomePrompt } from './outcomePrompt';
@@ -26,9 +28,30 @@ export const createAgentHumanRequestNotifier = (
         trigger: RequestTrigger.Chat,
       });
 
-    let result = await start(item.topicId ?? undefined);
-    // The topic may have been deleted since; a fresh one beats a lost outcome.
-    if (result.error && item.topicId) result = await start();
+    /**
+     * The parking topic may have been deleted since. `execAgent` reports that
+     * either as a result error or by throwing `TopicStartReservationError` —
+     * which it also throws for a topic that merely stayed busy. Only a topic
+     * that is really gone falls back to a fresh one; a busy topic keeps the
+     * outcome in its own conversation and is retried by redelivery.
+     */
+    const topicGone = async (topicId: string) =>
+      !(await new TopicModel(db, userId, workspaceId).findById(topicId));
+
+    let result: Awaited<ReturnType<typeof start>>;
+    try {
+      result = await start(item.topicId ?? undefined);
+    } catch (error) {
+      if (
+        !(error instanceof TopicStartReservationError) ||
+        !item.topicId ||
+        !(await topicGone(item.topicId))
+      ) {
+        throw error;
+      }
+      result = await start();
+    }
+    if (result.error && item.topicId && (await topicGone(item.topicId))) result = await start();
     if (result.error) throw new Error(result.error);
   },
 });

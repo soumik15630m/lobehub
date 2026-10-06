@@ -300,6 +300,31 @@ describe('outcome delivery to the agent', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('keeps a completed decision successful when claiming the wake fails', async () => {
+    const svc = await service();
+    const item = await svc.requestApproval(origin, action);
+    const model = (svc as unknown as { model: { claimNotification: unknown } }).model;
+    const claim = model.claimNotification;
+    model.claimNotification = async () => {
+      throw new Error('connection terminated unexpectedly');
+    };
+
+    const decided = await svc.decide(item.id, { action: 'approve' });
+
+    // The message went out and the answer says so; the wake is simply owed.
+    expect(decided.status).toBe('completed');
+    expect(sent).toHaveLength(1);
+    expect((await rowOf(item.id)).notifiedAt).toBeNull();
+
+    // A failing redelivery does not break the owner's read either…
+    expect(await svc.list({})).toHaveLength(1);
+
+    // …and once the database is back, the outcome is delivered.
+    model.claimNotification = claim;
+    await svc.list({});
+    expect(notified.map((n) => n.id)).toEqual([item.id]);
+  });
+
   it('stops waking after the attempt cap', async () => {
     const svc = await service();
     const item = await svc.requestApproval(origin, action);
