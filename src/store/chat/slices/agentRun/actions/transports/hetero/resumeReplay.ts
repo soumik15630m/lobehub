@@ -1,3 +1,5 @@
+import { LOADING_FLAT } from '@lobechat/const';
+import type { ConversationHistoryEntry } from '@lobechat/prompts';
 import type { HeteroSessionImportMessage, UIChatMessage } from '@lobechat/types';
 
 /**
@@ -77,4 +79,45 @@ export const buildResumeReplayMessages = (
   }
 
   return mapped;
+};
+
+/** Same turn cap as the gateway's DB-history fallback (`heteroDispatch`). */
+const PREVIOUS_CONVERSATION_MAX_TURNS = 30;
+
+/**
+ * The last text turns leading up to this run, for a CLI that starts without a
+ * native session (a branched edit, a reset session) and so would otherwise
+ * know nothing of the conversation. Mirrors the gateway's DB-history fallback.
+ *
+ * Walks the parent chain from the run's assistant row rather than taking the
+ * topic in time order, so sibling branches (earlier regenerate attempts) stay
+ * out. The prompt being sent is delivered separately and is dropped here.
+ */
+export const buildPreviousConversationTurns = (
+  messages: UIChatMessage[] | undefined,
+  assistantMessageId: string,
+): ConversationHistoryEntry[] => {
+  if (!messages || messages.length === 0) return [];
+
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  const chain: UIChatMessage[] = [];
+  const seen = new Set<string>();
+  let id = byId.get(assistantMessageId)?.parentId;
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const row = byId.get(id);
+    if (!row) break;
+    chain.push(row);
+    id = row.parentId ?? undefined;
+  }
+  chain.reverse();
+  if (chain.at(-1)?.role === 'user') chain.pop();
+
+  return chain
+    .filter(
+      (m): m is UIChatMessage & { role: 'assistant' | 'user' } =>
+        (m.role === 'user' || m.role === 'assistant') && !!m.content && m.content !== LOADING_FLAT,
+    )
+    .slice(-PREVIOUS_CONVERSATION_MAX_TURNS)
+    .map((m) => ({ content: m.content, role: m.role }));
 };

@@ -14,7 +14,9 @@ import { type ConversationContext, type ConversationHooks } from '../../../types
 import { createStore } from '../../index';
 import { MAX_HETERO_AUTO_RETRIES } from './heteroRetryConfig';
 
-vi.mock('@/services/topic', () => ({ topicService: { cancelRateLimitContinuation: vi.fn() } }));
+vi.mock('@/services/topic', () => ({
+  topicService: { branchTopicAtMessage: vi.fn(), cancelRateLimitContinuation: vi.fn() },
+}));
 
 // Mock useChatStore
 const mockCancelOperations = vi.fn();
@@ -1875,10 +1877,97 @@ describe('Generation Actions', () => {
       expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
         expect.any(Function),
         expect.objectContaining({
-          heterogeneousProvider: expect.objectContaining({ model: pinnedModel, type: providerType }),
+          heterogeneousProvider: expect.objectContaining({
+            model: pinnedModel,
+            type: providerType,
+          }),
         }),
       );
     });
+
+    it.runIf(providerType === 'codex')(
+      'resends an edit through the branched topic, leaving the source session alone',
+      async () => {
+        const branchContext = { agentId: 'session-1', threadId: null, topicId: 'branch-topic' };
+        const branchRows = [{ content: 'fixed prompt', id: 'branch-user', role: 'user' }];
+        const mockSwitchTopic = vi.fn();
+        await setupHeteroChatStore({
+          dbMessagesMap: { [messageMapKey(branchContext)]: branchRows },
+          messagesMap: { [messageMapKey(branchContext)]: branchRows },
+          prefetchMessages: vi.fn(),
+          refreshTopic: vi.fn(),
+          switchTopic: mockSwitchTopic,
+          topicDataMap: {
+            test: { items: [{ id: 'topic-1', metadata: { heteroSessionId: 'source-thread' } }] },
+          },
+        });
+        vi.mocked(topicService.branchTopicAtMessage).mockResolvedValue({
+          messageId: 'branch-user',
+          topicId: 'branch-topic',
+        });
+        const store = createStore({
+          context: { agentId: 'session-1', threadId: null, topicId: 'topic-1' },
+        });
+        store.setState({
+          displayMessages: [{ content: 'typo prompt', id: 'msg-1', role: 'user' }],
+        } as any);
+        const onAccepted = vi.fn();
+
+        await store
+          .getState()
+          .regenerateUserMessage('msg-1', { content: 'fixed prompt', onAccepted });
+        await vi.waitFor(() => expect(executeHeterogeneousAgentSpy).toHaveBeenCalled());
+
+        expect(topicService.branchTopicAtMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            content: 'fixed prompt',
+            messageId: 'msg-1',
+            topicId: 'topic-1',
+          }),
+        );
+        expect(onAccepted).toHaveBeenCalled();
+        expect(mockSwitchTopic).toHaveBeenCalledWith(
+          'branch-topic',
+          expect.objectContaining({ onlyIfActiveTopicIn: ['topic-1'] }),
+        );
+        expect(createMessageSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ parentId: 'branch-user', topicId: 'branch-topic' }),
+        );
+        expect(executeHeterogeneousAgentSpy).toHaveBeenCalledWith(
+          expect.any(Function),
+          expect.objectContaining({
+            context: expect.objectContaining({ topicId: 'branch-topic' }),
+            message: 'fixed prompt',
+            resumeSessionId: undefined,
+          }),
+        );
+      },
+    );
+
+    it.runIf(providerType === 'codex')(
+      'reports a friendly error and keeps the draft when the branch cannot be created',
+      async () => {
+        await setupHeteroChatStore();
+        vi.mocked(topicService.branchTopicAtMessage).mockRejectedValue(new Error('offline'));
+        const store = createStore({
+          context: { agentId: 'session-1', threadId: null, topicId: 'topic-1' },
+        });
+        const onAccepted = vi.fn();
+
+        const result = store
+          .getState()
+          .regenerateUserMessage('msg-1', { content: 'fixed prompt', onAccepted });
+
+        // The editor toasts this message, so it must not be the raw transport error.
+        await expect(result).rejects.toThrow(
+          'Could not create the new topic. Your edit is kept; try sending again.',
+        );
+        await expect(result).rejects.toMatchObject({ cause: new Error('offline') });
+
+        expect(onAccepted).not.toHaveBeenCalled();
+        expect(executeHeterogeneousAgentSpy).not.toHaveBeenCalled();
+      },
+    );
 
     it('preserves a legacy subscription resume', async () => {
       await setupHeteroChatStore({

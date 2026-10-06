@@ -26,7 +26,11 @@ import {
   isEchoedErrorText,
   normalizeHeterogeneousMessageError,
 } from '@lobechat/heterogeneous-agents/errors';
-import { formatContextSelections, formatPageSelections } from '@lobechat/prompts';
+import {
+  formatContextSelections,
+  formatPageSelections,
+  formatPreviousConversation,
+} from '@lobechat/prompts';
 import type {
   ChatMessageError,
   ChatToolPayload,
@@ -92,7 +96,11 @@ import { getNativeHeteroSessionBindingKey } from './heteroResume';
 import { createMessageWriteBatcher, type ToolMessageUpdateOperation } from './messageWriteBatcher';
 import { createPendingCreateLedger } from './pendingCreateLedger';
 import { resolveQuotaAccountSpawnPlan } from './resolveQuotaAccountEnv';
-import { buildResumeReplayMessages, shouldHydrateResumeReplay } from './resumeReplay';
+import {
+  buildPreviousConversationTurns,
+  buildResumeReplayMessages,
+  shouldHydrateResumeReplay,
+} from './resumeReplay';
 import { buildLobeHubSessionEnv } from './sessionEnv';
 
 /** Mirrors `idGenerator('threads', 16)` on the server so sync-allocated ids have the same shape. */
@@ -268,14 +276,17 @@ const buildLocalHeterogeneousSystemContext = ({
   agentSystemContext,
   contextSelections,
   pageSelections,
+  previousConversation,
 }: {
   agentSystemContext?: string;
   contextSelections?: ContextSelection[];
   pageSelections?: PageSelection[];
+  previousConversation?: string;
 }): string | undefined => {
   const parts: string[] = [];
 
   if (agentSystemContext?.trim()) parts.push(agentSystemContext.trim());
+  if (previousConversation) parts.push(previousConversation);
 
   const selectionContext =
     contextSelections && contextSelections.length > 0
@@ -2592,6 +2603,20 @@ export const executeHeterogeneousAgent = async (
       agentSystemContext: withConversationGoalPrompt(heterogeneousProvider.systemContext, message),
       contextSelections,
       pageSelections,
+      // Without a native session to resume (a branched edit, a reset session)
+      // the CLI would start blank; hand it the persisted branch, bounded the
+      // same way as the gateway fallback. Amp threads are server-backed. A
+      // caller that already replays history (Codex regenerate) passes it in
+      // the provider context in the same format; never send it twice.
+      previousConversation:
+        resumeSessionId ||
+        replayTranscript ||
+        heterogeneousProvider.type === 'amp' ||
+        heterogeneousProvider.systemContext?.includes('<previous_conversation>')
+          ? undefined
+          : formatPreviousConversation(
+              buildPreviousConversationTurns(getCurrentFrontendMessages(), assistantMessageId),
+            ),
     });
 
     // When resuming, hand main the prior turns so it can rebuild a Claude Code

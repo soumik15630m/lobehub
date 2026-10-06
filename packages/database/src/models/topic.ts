@@ -44,6 +44,7 @@ import {
   agentOperations,
   agents,
   chatGroups,
+  messageGroups,
   messagePlugins,
   messages,
   threads,
@@ -53,7 +54,7 @@ import {
 import type { LobeChatDatabase } from '../type';
 import { sanitizeBm25Query } from '../utils/bm25';
 import { COPIED_TOPIC_USAGE_RESET } from '../utils/copiedTranscript';
-import { markCopiedMessageMetadata } from '../utils/copyMessagesInDatabase';
+import { copyMessagesInDatabase, markCopiedMessageMetadata } from '../utils/copyMessagesInDatabase';
 import { genEndDateWhere, genRangeWhere, genStartDateWhere, genWhere } from '../utils/genWhere';
 import { idGenerator } from '../utils/idGenerator';
 import { inJsonStringArray } from '../utils/inJsonStringArray';
@@ -83,6 +84,19 @@ type TopicMetadataPatch = Omit<Partial<ChatTopicMetadata>, 'onboardingSession'> 
  * text is one click away in the topic itself.
  */
 const LAST_MESSAGE_PREVIEW_LENGTH = 2000;
+/**
+ * Run configuration a branched topic keeps from its source. Everything else in
+ * the metadata describes the source's own runs (native session ids, running
+ * operation, summaries) and must not leak into the branch.
+ */
+const BRANCH_TOPIC_METADATA_KEYS = [
+  'boundDeviceId',
+  'heteroEffort',
+  'reasoningConfig',
+  'repos',
+  'workingDirectory',
+  'workingDirectoryConfig',
+] as const satisfies readonly (keyof ChatTopicMetadata)[];
 const TASK_CALLBACK_RESERVATION_TTL_MS = 5 * 60 * 1000;
 /**
  * How long an operation that still claims `running` / `idle` may hold the topic
@@ -1697,6 +1711,113 @@ export class TopicModel {
         messages: duplicatedMessages,
         topic: duplicatedTopic,
       };
+    });
+  };
+
+  /**
+   * Copies the conversation that leads up to one user message into a new
+   * topic, ending at that message with replacement content: edit-and-resend
+   * for runtimes whose native history cannot be rewound (Codex).
+   *
+   * The branch holds the message's ancestor chain plus every tool result of
+   * the assistants on it; later turns and sibling branches stay behind, and
+   * the source topic is untouched. The topic keeps its owner, project and run
+   * configuration but none of the source's native session state, so the next
+   * run starts a fresh session. One transaction: a failure leaves nothing.
+   *
+   * Returns `undefined` when the topic or user message is not accessible.
+   */
+  branchAtMessage = async (
+    topicId: string,
+    messageId: string,
+    edit: { content: string; editorData?: Record<string, any> | null; title?: string },
+  ) => {
+    return this.db.transaction(async (tx) => {
+      const source = await tx.query.topics.findFirst({
+        where: and(eq(topics.id, topicId), this.ownership()),
+      });
+      if (!source) return;
+
+      const rows = await tx
+        .select({ id: messages.id, parentId: messages.parentId, role: messages.role })
+        .from(messages)
+        .where(and(eq(messages.topicId, topicId), this.messageOwnership()));
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      if (byId.get(messageId)?.role !== 'user') return;
+
+      const keep = new Set<string>();
+      let id: string | null | undefined = messageId;
+      while (id && !keep.has(id)) {
+        keep.add(id);
+        id = byId.get(id)?.parentId;
+      }
+      for (const row of rows) {
+        if (row.role === 'tool' && row.parentId && keep.has(row.parentId)) keep.add(row.id);
+      }
+
+      const metadata = Object.fromEntries(
+        BRANCH_TOPIC_METADATA_KEYS.filter((key) => source.metadata?.[key] !== undefined).map(
+          (key) => [key, source.metadata?.[key]],
+        ),
+      ) as ChatTopicMetadata;
+      const [branch] = await tx
+        .insert(topics)
+        .values(
+          buildWorkspacePayload(
+            { userId: this.userId, workspaceId: this.workspaceId },
+            {
+              agentId: source.agentId,
+              groupId: source.groupId,
+              id: this.genId(),
+              metadata,
+              model: source.model,
+              projectId: source.projectId,
+              projectWorkingDirectoryId: source.projectWorkingDirectoryId,
+              provider: source.provider,
+              sessionId: source.sessionId,
+              title: edit.title || source.title,
+            },
+          ),
+        )
+        .returning();
+
+      const messageIdPairs = [...keep].map(
+        (id) => [id, idGenerator('messages')] as [string, string],
+      );
+      await copyMessagesInDatabase({
+        agentIdExpr: sql`${messages.agentId}`,
+        childScope: (table) =>
+          buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, table),
+        executor: tx,
+        groupId: source.groupId,
+        messageIdPairs,
+        targetIdExpr: sql`${messages.targetId}`,
+        targetUserId: this.userId,
+        targetWorkspaceId: this.workspaceId ?? null,
+        // Thread rows on the chain join the branch's main conversation.
+        threadIdPairs: [],
+        topicIdPairs: [[topicId, branch.id]],
+      });
+      // Message groups are copied per topic; drop those (e.g. compression
+      // summaries of later turns) that no copied row belongs to.
+      await tx.execute(sql`
+        delete from ${messageGroups}
+        where ${messageGroups.topicId} = ${branch.id}
+          and not exists (
+            select 1 from ${messages} where ${messages.messageGroupId} = ${messageGroups.id}
+          )
+      `);
+
+      const branchMessageId = messageIdPairs.find(([sourceId]) => sourceId === messageId)![1];
+      await tx
+        .update(messages)
+        .set({
+          content: edit.content,
+          ...(edit.editorData !== undefined && { editorData: edit.editorData }),
+        })
+        .where(eq(messages.id, branchMessageId));
+
+      return { messageId: branchMessageId, topic: branch };
     });
   };
 

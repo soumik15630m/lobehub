@@ -7,7 +7,9 @@ import {
   agentOperations,
   agents,
   chatGroups,
+  files,
   messages,
+  messagesFiles,
   projects,
   sessions,
   topics,
@@ -1632,6 +1634,102 @@ describe('TopicModel', () => {
 
     it('throws when the source topic does not exist', async () => {
       await expect(topicModel.duplicate('nope')).rejects.toThrow('not found');
+    });
+  });
+
+  describe('branchAtMessage', () => {
+    const seedConversation = async () => {
+      const topic = await topicModel.create({
+        metadata: {
+          heteroEffort: 'high',
+          heteroSessionId: 'codex-thread-source',
+          runningOperation: { operationId: 'op-source' } as any,
+          workingDirectory: '/repo',
+        },
+        title: 'source',
+      });
+      const row = (id: string, role: string, content: string, parentId?: string) => ({
+        content,
+        id,
+        parentId,
+        role,
+        topicId: topic.id,
+        userId,
+      });
+      await serverDB
+        .insert(messages)
+        .values([
+          row('br-u0', 'user', 'first question'),
+          { ...row('br-a0', 'assistant', '', 'br-u0'), tools: [{ id: 'c1' }, { id: 'c2' }] as any },
+          row('br-a0-old', 'assistant', 'superseded attempt', 'br-u0'),
+          row('br-t1', 'tool', 'result one', 'br-a0'),
+          row('br-t2', 'tool', 'result two', 'br-a0'),
+          row('br-a1', 'assistant', 'first answer', 'br-t1'),
+          row('br-u1', 'user', 'typo prompt', 'br-a1'),
+          row('br-a2', 'assistant', 'reply to typo', 'br-u1'),
+          row('br-u2', 'user', 'later turn', 'br-a2'),
+        ]);
+      await serverDB.insert(files).values({
+        fileType: 'image/png',
+        id: 'br-file',
+        name: 'shot.png',
+        size: 1,
+        url: 'files/shot.png',
+        userId,
+      });
+      await serverDB
+        .insert(messagesFiles)
+        .values({ fileId: 'br-file', messageId: 'br-u1', userId });
+      return topic;
+    };
+
+    it('copies only the ancestry of the edited message into a fresh-session topic', async () => {
+      const topic = await seedConversation();
+
+      const result = await topicModel.branchAtMessage(topic.id, 'br-u1', {
+        content: 'fixed prompt',
+        title: 'fixed prompt',
+      });
+
+      const copied = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.topicId, result!.topic.id));
+      const byContent = new Map(copied.map((m) => [m.content, m]));
+      // Later turns and the sibling attempt stay in the source.
+      expect([...byContent.keys()].sort()).toEqual(
+        ['', 'first answer', 'first question', 'fixed prompt', 'result one', 'result two'].sort(),
+      );
+      const edited = byContent.get('fixed prompt')!;
+      expect(edited.id).toBe(result!.messageId);
+      expect(edited.parentId).toBe(byContent.get('first answer')!.id);
+      expect(byContent.get('result two')!.parentId).toBe(byContent.get('')!.id);
+
+      const [link] = await serverDB
+        .select()
+        .from(messagesFiles)
+        .where(eq(messagesFiles.messageId, edited.id));
+      expect(link?.fileId).toBe('br-file');
+
+      // Run configuration survives; the source's native session does not.
+      expect(result!.topic.metadata).toEqual({ heteroEffort: 'high', workingDirectory: '/repo' });
+      expect(result!.topic.title).toBe('fixed prompt');
+
+      const source = await serverDB.select().from(messages).where(eq(messages.topicId, topic.id));
+      expect(source).toHaveLength(9);
+      expect(source.find((m) => m.id === 'br-u1')?.content).toBe('typo prompt');
+    });
+
+    it('returns undefined unless the target is an accessible user message', async () => {
+      const topic = await seedConversation();
+
+      expect(await topicModel.branchAtMessage(topic.id, 'br-a1', { content: 'x' })).toBeUndefined();
+      expect(await topicModel.branchAtMessage('nope', 'br-u1', { content: 'x' })).toBeUndefined();
+      expect(
+        await new TopicModel(serverDB, otherUserId).branchAtMessage(topic.id, 'br-u1', {
+          content: 'x',
+        }),
+      ).toBeUndefined();
     });
   });
 

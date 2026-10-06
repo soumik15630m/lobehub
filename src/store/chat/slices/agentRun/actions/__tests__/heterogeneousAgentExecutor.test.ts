@@ -2381,6 +2381,71 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
       expect(resumedSystemContext).not.toContain('/Users/me/repo');
     });
 
+    it('should replay the persisted branch when there is no native session to resume', async () => {
+      // A branched Codex edit (or a topic whose session was reset) has history
+      // rows but no native session; a retry used to start with no context at all.
+      const store = createMockStore({
+        dbMessagesMap: {
+          'main_agent-1_topic-1': [
+            { content: 'Original question', id: 'u0', role: 'user' },
+            { content: 'Original answer', id: 'a0', parentId: 'u0', role: 'assistant' },
+            { content: 'Superseded attempt', id: 'a0-old', parentId: 'u0', role: 'assistant' },
+            { content: 'test prompt', id: 'u1', parentId: 'a0', role: 'user' },
+            { content: '...', id: 'ast-initial', parentId: 'u1', role: 'assistant' },
+          ],
+        },
+      });
+      const get = vi.fn(() => store);
+      const params = {
+        ...defaultParams,
+        heterogeneousProvider: { command: 'codex', type: 'codex' as const },
+      };
+
+      await executeHeterogeneousAgent(get, params);
+
+      expect(mockSendPrompt.mock.calls[0][0].systemContext).toBe(
+        [
+          '<previous_conversation>',
+          '<user>\nOriginal question\n</user>',
+          '<assistant>\nOriginal answer\n</assistant>',
+          '</previous_conversation>',
+        ].join('\n'),
+      );
+
+      // A resumed session already holds this history natively.
+      await executeHeterogeneousAgent(get, { ...params, resumeSessionId: 'codex-thread-existing' });
+
+      expect(mockSendPrompt.mock.calls[1][0].systemContext).toBeUndefined();
+    });
+
+    it('should not replay history again when the caller already supplies it', async () => {
+      const replay =
+        '<previous_conversation>\n<user>\nfrom caller\n</user>\n</previous_conversation>';
+      const store = createMockStore({
+        dbMessagesMap: {
+          'main_agent-1_topic-1': [
+            { content: 'Original question', id: 'u0', role: 'user' },
+            { content: 'test prompt', id: 'u1', parentId: 'u0', role: 'user' },
+            { content: '...', id: 'ast-initial', parentId: 'u1', role: 'assistant' },
+          ],
+        },
+      });
+
+      await executeHeterogeneousAgent(
+        vi.fn(() => store),
+        {
+          ...defaultParams,
+          heterogeneousProvider: {
+            command: 'codex',
+            systemContext: replay,
+            type: 'codex' as const,
+          },
+        },
+      );
+
+      expect(mockSendPrompt.mock.calls[0][0].systemContext).toBe(replay);
+    });
+
     it('should forward context selections as heterogeneous system context', async () => {
       const store = createMockStore();
       const get = vi.fn(() => store);

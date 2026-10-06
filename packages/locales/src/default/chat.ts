@@ -836,6 +836,14 @@ export default {
   'mention.category.topics': 'Topics',
   'mention.category.workspaceAgents': 'Workspace',
   'mention.title': 'Mention Members',
+  'messageAction.codexEdit.alreadySubmitting': 'This edit is already being submitted',
+  'messageAction.codexEdit.branchFailed':
+    'Could not create the new topic. Your edit is kept; try sending again.',
+  'messageAction.codexEdit.branchNotice':
+    'Sends in a new topic; the original stays as it is. Files Codex already changed are not reverted.',
+  'messageAction.codexEdit.cannotSubmit':
+    'This conversation cannot accept an edited message right now',
+  'messageAction.codexEdit.sourceUnavailable': 'The source conversation or agent is unavailable',
   'messageAction.collapse': 'Collapse Message',
   'messageAction.continueGeneration': 'Continue Generating',
   'messageAction.continueGenerationUnsupported':
