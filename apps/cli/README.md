@@ -64,6 +64,22 @@ By default the CLI connects to `https://app.lobehub.com`. To point it at a diffe
 
 Priority: `LOBEHUB_SERVER` env var > `settings.json` > default official URL.
 
+## Connected-device agent execution
+
+`lh connect --gateway <url> --device-id <id>` receives authorized agent requests from the device gateway. Use `--workspace <id>` when enrolling the device in a workspace pool. The gateway, backend and authenticated account must belong to the same environment; a loopback address is only reachable within the same host or container network.
+
+For Codex, the connected-device path launches one `lh hetero exec` wrapper and one native `codex exec` process per operation. Desktop's local Codex app-server is a separate transport; app-server reuse and PID checks do not describe device execution.
+
+The dispatch contract is:
+
+- `agentId`, `topicId` and `operationId` become the corresponding `LOBEHUB_*_ID` environment variables of that operation. An omitted agent ID stays absent instead of inheriting the connector launcher's identity.
+- `workspaceId` selects the device pool. `ingestWorkspaceId` selects the conversation workspace and takes precedence for the child environment. They need not be the same workspace.
+- A continuation carries its explicit `resumeSessionId` and a fresh operation ID. Each operation receives its own credentials, prompt and arguments; concurrent requests never mutate the connector's environment.
+- Each wrapper owns a separate process group. The operation-keyed task registry persists its PID and conversation identity so cancellation targets that operation's process tree, including after the connector restarts. A device disconnect is not a cancellation request.
+- `agent_run_ack: accepted` confirms that the wrapper spawned. Output and terminal status still arrive through the normal server ingest and agent gateway stream; the acknowledgement alone does not prove shell execution or completion.
+
+Fork and permission features should preserve these boundaries: dispatch the intended native session explicitly, generate a new operation ID, and pass permission arguments on that request. Never infer operation ownership from the connector's ambient environment or a shared device ID.
+
 ## Shell Completion
 
 ### Install completion for a linked CLI
