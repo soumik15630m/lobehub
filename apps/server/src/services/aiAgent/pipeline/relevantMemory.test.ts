@@ -63,7 +63,7 @@ describe('fetchRelevantMemory', () => {
     searchMemory.mockReset().mockResolvedValue({
       activities: [],
       contexts: [{ description: 'the personal agent goal', id: 'ctx-1', title: 'Project' }],
-      experiences: [{ id: 'exp-1', keyLearning: 'ship in small PRs', situation: 'release' }],
+      experiences: [],
       identities: [
         {
           createdAt: new Date('2026-01-02T00:00:00Z'),
@@ -90,7 +90,7 @@ describe('fetchRelevantMemory', () => {
     expect(searchMemory).toHaveBeenCalledWith(
       {
         queries: ['what did we decide about releases?'],
-        topK: { activities: 0, contexts: 3, experiences: 3, identities: 2, preferences: 3 },
+        topK: { activities: 0, contexts: 3, experiences: 0, identities: 2, preferences: 3 },
       },
       [[0.1, 0.2, 0.3]],
     );
@@ -132,7 +132,7 @@ describe('fetchRelevantMemory', () => {
 
     expect(memory).toEqual({
       contexts: [{ description: 'the personal agent goal', id: 'ctx-1', title: 'Project' }],
-      experiences: [{ id: 'exp-1', keyLearning: 'ship in small PRs', situation: 'release' }],
+      experiences: [],
       identities: [
         {
           capturedAt: new Date('2026-01-02T00:00:00Z'),
@@ -144,6 +144,65 @@ describe('fetchRelevantMemory', () => {
       ],
       preferences: [{ conclusionDirectives: 'no emoji', id: 'prf-1' }],
     });
+  });
+
+  it('spends no budget on the retired experience layer', async () => {
+    await fetchRelevantMemory({ db: {} as never, prompt: 'release cadence', userId: 'user-1' });
+
+    // `searchMemory` drops the experience layer for every caller; a nonzero
+    // budget here would promise memories that can never be injected.
+    expect(searchMemory.mock.calls[0][0].topK.experiences).toBe(0);
+  });
+
+  it('dates an identity by its capture time, not its insertion time', async () => {
+    searchMemory.mockResolvedValue({
+      ...emptyResult,
+      identities: [
+        {
+          // Backfilled row: captured long before it was inserted.
+          capturedAt: new Date('2024-05-01T00:00:00Z'),
+          createdAt: new Date('2026-01-02T00:00:00Z'),
+          description: 'maintains LobeHub',
+          episodicDate: null,
+          id: 'idn-1',
+          role: 'engineer',
+          type: 'professional',
+        },
+      ],
+    });
+
+    const memory = await fetchRelevantMemory({
+      db: {} as never,
+      prompt: 'release cadence',
+      userId: 'user-1',
+    });
+
+    expect(memory?.identities?.[0].capturedAt).toEqual(new Date('2024-05-01T00:00:00Z'));
+  });
+
+  it('prefers the episodic date over the capture time for an identity', async () => {
+    searchMemory.mockResolvedValue({
+      ...emptyResult,
+      identities: [
+        {
+          capturedAt: new Date('2024-05-01T00:00:00Z'),
+          createdAt: new Date('2026-01-02T00:00:00Z'),
+          description: 'joined LobeHub',
+          episodicDate: new Date('2023-03-01T00:00:00Z'),
+          id: 'idn-2',
+          role: 'engineer',
+          type: 'professional',
+        },
+      ],
+    });
+
+    const memory = await fetchRelevantMemory({
+      db: {} as never,
+      prompt: 'release cadence',
+      userId: 'user-1',
+    });
+
+    expect(memory?.identities?.[0].capturedAt).toEqual(new Date('2023-03-01T00:00:00Z'));
   });
 
   it('returns undefined for a blank prompt without calling the provider', async () => {

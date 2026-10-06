@@ -18,14 +18,15 @@ const log = debug('lobe-server:relevant-memory');
  *
  * Deliberately NOT `MEMORY_SEARCH_TOP_K_LIMITS.medium`: that profile is tuned for
  * the `searchMemory` TOOL, where a model can refine and re-query, and it leaves
- * `contexts` / `experiences` at 0. A run gets exactly one shot at injection, so
- * every layer the context engine can render gets a slot — identities stay short
- * because they are the least query-specific layer.
+ * `contexts` at 0. A run gets exactly one shot at injection, so every live layer
+ * the context engine can render gets a slot — identities stay short because they
+ * are the least query-specific layer. Experience memory is retired and
+ * `searchMemory` never returns it, so it gets no budget.
  */
 const INJECTION_TOP_K = {
   activities: 0,
   contexts: 3,
-  experiences: 3,
+  experiences: 0,
   identities: 2,
   preferences: 3,
 } as const;
@@ -109,13 +110,10 @@ export const fetchRelevantMemory = async ({
       id: context.id,
       title: context.title,
     })),
-    experiences: result.experiences.map((experience) => ({
-      id: experience.id,
-      keyLearning: experience.keyLearning,
-      situation: experience.situation,
-    })),
+    // Retired layer: `searchMemory` never searches it, so there is nothing to map.
+    experiences: [],
     identities: (result.identities ?? []).map((identity) => ({
-      capturedAt: identity.episodicDate ?? identity.createdAt,
+      capturedAt: identity.episodicDate ?? identity.capturedAt ?? identity.createdAt,
       description: identity.description,
       id: identity.id,
       role: identity.role,
@@ -128,20 +126,16 @@ export const fetchRelevantMemory = async ({
   };
 
   const retrievedCount =
-    memories.contexts!.length +
-    memories.experiences!.length +
-    memories.identities!.length +
-    memories.preferences!.length;
+    memories.contexts!.length + memories.identities!.length + memories.preferences!.length;
   if (retrievedCount === 0) {
     log('no relevant memories for this run');
     return undefined;
   }
 
   log(
-    'injected %d relevant memories (contexts=%d experiences=%d preferences=%d identities=%d)',
+    'injected %d relevant memories (contexts=%d preferences=%d identities=%d)',
     retrievedCount,
     memories.contexts!.length,
-    memories.experiences!.length,
     memories.preferences!.length,
     memories.identities!.length,
   );
