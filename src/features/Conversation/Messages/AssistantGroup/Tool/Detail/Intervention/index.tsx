@@ -41,6 +41,9 @@ const Intervention = memo<InterventionProps>(
     const approvalMode = useUserStore(toolInterventionSelectors.approvalMode);
     const { canUseResource } = useConversationResourceAccess();
     const [isEditing, setIsEditing] = useState(false);
+    // Raised by an intervention that cannot show what is being approved yet
+    // (review data loading or failed); the approve action waits on it.
+    const [approvalBlocked, setApprovalBlocked] = useState(false);
     const updatePluginArguments = useConversationStore((s) => s.updatePluginArguments);
     const message = useConversationStore((s) => dataSelectors.getDbMessageById(id)(s));
     const usesDurableServerClaim = Boolean(
@@ -295,6 +298,7 @@ const Intervention = memo<InterventionProps>(
           <ApprovalActions
             apiName={apiName}
             approvalMode={approvalMode}
+            approveDisabled={approvalBlocked}
             assistantGroupId={assistantGroupId}
             identifier={identifier}
             messageId={id}
@@ -313,6 +317,7 @@ const Intervention = memo<InterventionProps>(
             identifier={identifier}
             messageId={id}
             registerBeforeApprove={registerBeforeApprove}
+            onApprovalBlockedChange={setApprovalBlocked}
             onArgsChange={handleArgsChange}
           />
           {actionsPortalTarget ? createPortal(actions, actionsPortalTarget) : actions}
