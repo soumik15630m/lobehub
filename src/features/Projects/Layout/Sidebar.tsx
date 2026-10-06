@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 
 import AsyncError from '@/components/AsyncError';
+import { useDashboardFeature } from '@/features/Dashboard/hooks/useDashboardFeature';
 import NavItem from '@/features/NavPanel/components/NavItem';
 import { NavPanelPortal } from '@/features/NavPanel/NavPanelPortal';
 import SideBarLayout from '@/features/NavPanel/SideBarLayout';
@@ -33,6 +34,7 @@ const ProjectSidebarContent = memo(() => {
   const projectGoalsPath = getProjectGoalsPath(projectId!);
   const projectAcceptancePath = getProjectAcceptancePath(projectId!);
   const projectDashboardPath = getProjectDashboardPath(projectId!);
+  const { enabled: dashboardEnabled } = useDashboardFeature();
 
   const header = <ProjectHeader project={detail?.project} />;
 
@@ -63,14 +65,16 @@ const ProjectSidebarContent = memo(() => {
             title={t('sections.goals')}
             onClick={() => navigate(projectGoalsPath)}
           />
-          <NavItem
-            icon={LayoutDashboardIcon}
-            title={t('sections.dashboard')}
-            active={
-              pathname === projectDashboardPath || pathname.startsWith(`${projectDashboardPath}/`)
-            }
-            onClick={() => navigate(projectDashboardPath)}
-          />
+          {dashboardEnabled && (
+            <NavItem
+              icon={LayoutDashboardIcon}
+              title={t('sections.dashboard')}
+              active={
+                pathname === projectDashboardPath || pathname.startsWith(`${projectDashboardPath}/`)
+              }
+              onClick={() => navigate(projectDashboardPath)}
+            />
+          )}
           <NavItem
             active={pathname === projectAcceptancePath}
             icon={ClipboardCheckIcon}

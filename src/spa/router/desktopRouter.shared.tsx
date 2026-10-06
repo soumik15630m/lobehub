@@ -1017,6 +1017,14 @@ export const sharedMainAreaChildren: RouteObject[] = [
         path: ':dashboardId',
       },
     ],
+    // Off unless the `dashboard` feature flag is on: the gate leaves for home.
+    element: dynamicLayout(
+      () => import('@/routes/(main)/dashboard/_layout'),
+      'Desktop > Dashboards > Layout',
+      {
+        preloadId: 'dashboard',
+      },
+    ),
     errorElement: <ErrorBoundary resetPath=".." />,
     path: 'dashboard',
   },
@@ -1065,6 +1073,12 @@ export const sharedMainAreaChildren: RouteObject[] = [
             path: ':dashboardId',
           },
         ],
+        // Off unless the `dashboard` feature flag is on: the gate leaves for the project.
+        element: dynamicLayout(
+          () => import('@/routes/(main)/project/[projectId]/dashboard/_layout'),
+          'Desktop > Project Dashboards > Layout',
+          { preloadId: 'dashboard' },
+        ),
         path: 'dashboard',
       },
       {
