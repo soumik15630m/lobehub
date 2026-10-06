@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   MachinePaymentRail,
@@ -86,6 +86,13 @@ const post = (app: Hono, path: string, body: unknown, headers: Record<string, st
   });
 
 const SEARCH = '/tools/lobe-web-browsing/search';
+
+// The route pulls in every builtin tool manifest. Transforming that graph the
+// first time can exceed the default per-test timeout on a cold CI runner, so
+// pay it once here; `loadApp`'s later re-imports reuse the transform cache.
+beforeAll(async () => {
+  await import('./tools.route');
+}, 60_000);
 
 beforeEach(() => {
   state.recorded = [];
