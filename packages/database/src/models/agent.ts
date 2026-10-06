@@ -3,6 +3,7 @@ import { INBOX_SESSION_ID, isHeterogeneousAgentModelId } from '@lobechat/const';
 import type { AgentRankItem, AgentTopicShareSubject, LobeAgentAgencyConfig } from '@lobechat/types';
 import {
   DEFAULT_WORKSPACE_AGENT_SELECTION_POLICIES,
+  getHeterogeneousNativeModelProvider,
   pruneWorkingDirByDeviceDeletes,
 } from '@lobechat/types';
 import { toRecord } from '@lobechat/utils/object';
@@ -585,15 +586,28 @@ export class AgentModel {
    * Returns `null` when the agent is not visible to the current caller. When
    * found, `snapshot` is non-null only if both `model` and `provider` are set
    * — same contract as `getAgentModelConfig`.
+   *
+   * Use when:
+   * - Creating a Task with inherited defaults or a native model-only override.
+   *
+   * Expects:
+   * - An Agent ID or slug within the caller's visibility scope.
+   *
+   * Returns:
+   * - The unchanged runtime snapshot and visibility, plus the native model provider
+   *   when subscription/local authentication permits native model overrides.
    */
   getAgentSnapshotForTaskCreate = async (
     idOrSlug: string,
   ): Promise<{
+    /** Native provider for explicit model-only Tasks; absent for API authentication. */
+    nativeModelProvider?: string;
     snapshot: { model: string; provider: string } | null;
     visibility: 'private' | 'public';
   } | null> => {
     const rows = await this.db
       .select({
+        agencyConfig: agents.agencyConfig,
         model: agents.model,
         provider: agents.provider,
         visibility: agents.visibility,
@@ -606,7 +620,14 @@ export class AgentModel {
     if (!row) return null;
     const snapshot =
       row.model && row.provider ? { model: row.model, provider: row.provider } : null;
-    return { snapshot, visibility: row.visibility as 'private' | 'public' };
+    const nativeModelProvider = getHeterogeneousNativeModelProvider(
+      row.agencyConfig?.heterogeneousProvider,
+    );
+    return {
+      ...(nativeModelProvider ? { nativeModelProvider } : {}),
+      snapshot,
+      visibility: row.visibility as 'private' | 'public',
+    };
   };
 
   /**

@@ -1333,6 +1333,7 @@ export class AiAgentService {
           onOperationCreated: params.onOperationCreated,
           parentOperationId,
           pinnedHeterogeneousTopicModel: turn.pinnedHeterogeneousTopicModel,
+          pinnedHeterogeneousTopicSources: turn.pinnedHeterogeneousTopicSources,
           requestTrigger: requestTriggerMetadata.trigger,
           requestedDeviceId: turn.requestedDeviceId,
           runAttachments,
