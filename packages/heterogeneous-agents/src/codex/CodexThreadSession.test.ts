@@ -41,6 +41,7 @@ const createClientHarness = (
     initialThreadId?: string;
     interruptError?: Error;
     malformedThreadStart?: boolean;
+    resumeStatus?: 'active' | 'idle' | 'systemError';
     threadNameError?: Error;
   } = {},
 ): ClientHarness => {
@@ -72,6 +73,7 @@ const createClientHarness = (
 
   const client = {
     acquireConsumer: vi.fn(() => releaseConsumer),
+    acquireThread: vi.fn(() => vi.fn()),
     connect: options.connectError
       ? vi.fn().mockRejectedValue(options.connectError)
       : vi.fn().mockResolvedValue({ userAgent: 'codex-test' }),
@@ -84,7 +86,9 @@ const createClientHarness = (
     registerThread: vi.fn((_threadId: string, params: unknown, value: typeof registration) => {
       resumeParams = params;
       registration = value;
-      return vi.fn();
+      return vi.fn(() => {
+        if (registration === value) registration = undefined;
+      });
     }),
     request: vi.fn(async (method: string, params: unknown) => {
       requests.push({ method, params });
@@ -97,7 +101,10 @@ const createClientHarness = (
         if (options.failResume) throw new Error('Thread not found');
         return {
           model: 'gpt-5.5-codex',
-          thread: { id: options.initialThreadId ?? 'thread-1' },
+          thread: {
+            id: options.initialThreadId ?? 'thread-1',
+            status: { type: options.resumeStatus ?? 'idle' },
+          },
         };
       }
       if (method === 'thread/name/set') {
@@ -195,6 +202,148 @@ const createSession = (
 };
 
 describe('CodexThreadSession', () => {
+  const provenance = (operationId: string) => ({
+    LOBEHUB_AGENT_ID: 'agent',
+    LOBEHUB_OPERATION_ID: operationId,
+    LOBEHUB_TOPIC_ID: 'topic',
+  });
+  const runWithProvenance = (session: CodexThreadSession, operationId: string) =>
+    session.run({
+      input: [{ text: 'hello', text_elements: [], type: 'text' }],
+      onRawMessage: () => {},
+      operationId,
+      provenance: provenance(operationId),
+    });
+
+  it('unsubscribes and resumes the loaded thread with the current run provenance', async () => {
+    const harness = createClientHarness();
+    const { session } = createSession(harness);
+
+    try {
+      await runWithProvenance(session, 'op-a');
+      await runWithProvenance(session, 'op-b');
+
+      const threadRequests = harness.requests.filter(({ method }) =>
+        ['thread/start', 'thread/unsubscribe', 'thread/resume'].includes(method),
+      );
+      expect(threadRequests.map(({ method }) => method)).toEqual([
+        'thread/start',
+        'thread/unsubscribe',
+        'thread/resume',
+      ]);
+      expect(threadRequests.at(-1)?.params).toMatchObject({
+        config: {
+          'shell_environment_policy.set.LOBEHUB_OPERATION_ID': 'op-b',
+          'shell_environment_policy.set.LOBEHUB_TOPIC_ID': 'topic',
+        },
+      });
+    } finally {
+      session.close();
+    }
+  });
+
+  it('replaces queued reconnect params when the next run has new provenance', async () => {
+    const harness = createClientHarness();
+    const { session } = createSession(harness);
+
+    try {
+      await runWithProvenance(session, 'old');
+      harness.disconnect();
+      harness.client.connect.mockImplementationOnce(async () => {
+        await harness.resume();
+      });
+      await runWithProvenance(session, 'new');
+
+      const resume = harness.requests.filter(({ method }) => method === 'thread/resume');
+      expect(resume.at(-1)?.params).toMatchObject({
+        config: { 'shell_environment_policy.set.LOBEHUB_OPERATION_ID': 'new' },
+      });
+      expect(harness.registeredResumeParams()).toMatchObject({
+        config: { 'shell_environment_policy.set.LOBEHUB_OPERATION_ID': 'new' },
+      });
+    } finally {
+      session.close();
+    }
+  });
+
+  it('does not resume after closing during an unsubscribe request', async () => {
+    const harness = createClientHarness({ initialThreadId: 'existing' });
+    const { session } = createSession(harness, { initialThreadId: 'existing' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const request = harness.client.request.getMockImplementation();
+    harness.client.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread/unsubscribe') await gate;
+      return request(method, params);
+    });
+
+    const run = runWithProvenance(session, 'old');
+    await vi.waitFor(() =>
+      expect(harness.client.request).toHaveBeenCalledWith('thread/unsubscribe', {
+        threadId: 'existing',
+      }),
+    );
+    session.close();
+    release();
+    await run;
+
+    expect(harness.requests.map(({ method }) => method)).toEqual(['thread/unsubscribe']);
+  });
+
+  it('reports a claimed native thread as a run error instead of failing construction', async () => {
+    const harness = createClientHarness({ initialThreadId: 'thread-existing' });
+    harness.client.acquireThread.mockImplementation(() => {
+      throw new Error('Codex thread already has an active session: thread-existing');
+    });
+    const { session, statuses } = createSession(harness, { initialThreadId: 'thread-existing' });
+
+    await expect(runWithProvenance(session, 'op-a')).rejects.toThrow(
+      'already has an active session',
+    );
+    expect(statuses.at(-1)).toBe('error');
+    expect(harness.requests).toEqual([]);
+    session.close();
+  });
+
+  it('refuses to change the shell context of a thread whose turn is still active', async () => {
+    const harness = createClientHarness({
+      initialThreadId: 'thread-existing',
+      resumeStatus: 'active',
+    });
+    const { session } = createSession(harness, { initialThreadId: 'thread-existing' });
+
+    try {
+      await expect(runWithProvenance(session, 'op-a')).rejects.toThrow(
+        'still finishing the previous turn',
+      );
+      expect(session.canFallbackToExec).toBe(false);
+      expect(harness.requests.some(({ method }) => method === 'turn/start')).toBe(false);
+    } finally {
+      session.close();
+    }
+  });
+
+  it('runs on a resumed thread that reports a non-active status', async () => {
+    const harness = createClientHarness({
+      initialThreadId: 'thread-existing',
+      resumeStatus: 'systemError',
+    });
+    const { session } = createSession(harness, { initialThreadId: 'thread-existing' });
+
+    try {
+      await runWithProvenance(session, 'op-a');
+      expect(harness.requests.map(({ method }) => method)).toEqual([
+        'thread/unsubscribe',
+        'thread/resume',
+        'turn/start',
+      ]);
+    } finally {
+      session.close();
+    }
+  });
+
   it('sets the original prompt as the name of a new persisted thread', async () => {
     const harness = createClientHarness();
     const { run, session } = createSession(harness, { threadName: 'Original prompt title' });
