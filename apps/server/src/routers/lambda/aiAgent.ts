@@ -1609,6 +1609,7 @@ const WaitInterventionResponseSchema = z.object({
 const SubmitHeteroInterventionSchema = z.object({
   cancelReason: z.enum(['timeout', 'user_cancelled', 'session_ended']).optional(),
   cancelled: z.boolean().optional(),
+  interventionId: z.string().min(1).optional(),
   operationId: z.string().min(1),
   /** Optional only for backward compatibility with pre-contract Web clients. */
   resolutionRequestId: z.string().uuid().optional(),
@@ -3700,6 +3701,7 @@ export const aiAgentRouter = router({
       const {
         operationId,
         toolCallId,
+        interventionId,
         stepIndex,
         result,
         cancelled,
@@ -3752,6 +3754,7 @@ export const aiAgentRouter = router({
           cancelReason: cancelled ? 'user_cancelled' : undefined,
           cancelled,
           producerAck: false,
+          interventionId,
           result: cancelled ? undefined : result,
           resolutionRequestId,
           toolCallId,
