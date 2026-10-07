@@ -816,7 +816,7 @@ export class GatewayActionImpl {
      */
     messageContext?: ConversationContext;
     /** Request metadata carried from the originating user message. */
-    metadata?: Pick<MessageMetadata, 'steer' | 'trigger'>;
+    metadata?: Pick<MessageMetadata, 'contextSelections' | 'pageSelections' | 'steer' | 'trigger'>;
     /** Called as soon as phase-1 returns with a persisted user message. */
     onMessageAccepted?: () => void;
     /** Called when a new topic is persisted, before UI hydration and stream setup. */
@@ -1079,6 +1079,8 @@ export class GatewayActionImpl {
               },
               ...desktopDeviceHints,
               clientOperations,
+              contextSelections: metadata?.contextSelections,
+              pageSelections: metadata?.pageSelections,
               fileIds,
               replacesOperationId,
               mentionedAgents,

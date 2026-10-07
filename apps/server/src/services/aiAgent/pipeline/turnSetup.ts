@@ -16,6 +16,7 @@ import {
   ordinaryFileAccessScope,
   RequestTrigger,
   resolveHeterogeneousProviderTopicModel,
+  resolveHeterogeneousTopicRuntimeSnapshot,
 } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import debug from 'debug';
@@ -60,8 +61,9 @@ export interface RunAttachments {
 
 /**
  * Build the reasoning snapshot for a topic being created — see
- * `ChatTopicMetadata.reasoningConfig` / `heteroEffort`. Returns undefined when
- * there is nothing to pin (non-reasoning model, hetero agent without an effort)
+ * `ChatTopicMetadata.reasoningConfig` / `heteroEffort` / `heteroSpeed`. Returns
+ * undefined when there is nothing to pin (non-reasoning model, hetero agent
+ * without effort or speed)
  * so the caller leaves metadata untouched. Never throws: a failed lookup just
  * means the topic follows the user-level config until the user pins one.
  */
@@ -77,10 +79,12 @@ const resolveTopicReasoningSnapshot = async ({
   isHeteroTopic: boolean;
   model: string;
   provider: string;
-}): Promise<Pick<ChatTopicMetadata, 'heteroEffort' | 'reasoningConfig'> | undefined> => {
+}): Promise<
+  Pick<ChatTopicMetadata, 'heteroEffort' | 'heteroSpeed' | 'reasoningConfig'> | undefined
+> => {
   if (isHeteroTopic) {
-    const effort = heterogeneousProvider?.effort;
-    return effort === undefined ? undefined : { heteroEffort: effort };
+    const snapshot = resolveHeterogeneousTopicRuntimeSnapshot(heterogeneousProvider);
+    return Object.keys(snapshot).length === 0 ? undefined : snapshot;
   }
 
   try {
@@ -326,6 +330,8 @@ export interface TurnSetupInput {
   botContext?: InternalExecAgentParams['botContext'];
   botSender?: InternalExecAgentParams['botSender'];
   clientIds?: InternalExecAgentParams['clientIds'];
+  /** Selected context to persist on the new user row, never the assistant row. */
+  contextSelections?: InternalExecAgentParams['contextSelections'];
   /** Stable assistant id for a generic intervention continuation. */
   continuationAssistantId?: string;
   conversationAgentId: string;
@@ -335,6 +341,8 @@ export interface TurnSetupInput {
   files?: InternalExecAgentParams['files'];
   modelOverride?: string;
   operationTaskId?: string;
+  /** Selected page excerpts to persist on the new user row. */
+  pageSelections?: InternalExecAgentParams['pageSelections'];
   parentMessageId?: string;
   prompt: string;
   providerOverride?: string;
@@ -627,15 +635,20 @@ export const setupTurn = async (
         topicId,
       );
     }
-    // The heterogeneous effort pin lives in metadata and is independent of the
-    // model pin (a runtime without a model selector can still pin an effort).
+    // Effort and speed pins live in metadata and are independent of the model
+    // pin (a runtime without a model selector can still pin them). They belong
+    // to the topic's own agent for the same reason as the model pin.
     const pinnedHeteroEffort = canUseTopicModelPin
       ? existingTopic?.metadata?.heteroEffort
       : undefined;
-    if (pinnedHeteroEffort !== undefined) {
+    const pinnedHeteroSpeed = canUseTopicModelPin
+      ? existingTopic?.metadata?.heteroSpeed
+      : undefined;
+    if (pinnedHeteroEffort !== undefined || pinnedHeteroSpeed !== undefined) {
       pinnedHeterogeneousTopicModel = {
         ...pinnedHeterogeneousTopicModel,
-        effort: pinnedHeteroEffort,
+        ...(pinnedHeteroEffort === undefined ? {} : { effort: pinnedHeteroEffort }),
+        ...(pinnedHeteroSpeed === undefined ? {} : { speed: pinnedHeteroSpeed }),
       };
     }
 
@@ -780,7 +793,13 @@ export const setupTurn = async (
     // branch), so a group turn must stamp groupId or the message never
     // shows when the topic is reopened (group topic sidebar + ownership fix).
     groupId: appContext?.groupId ?? undefined,
-    metadata: requestTriggerMetadata,
+    metadata: {
+      ...requestTriggerMetadata,
+      ...(input.contextSelections?.length
+        ? { contextSelections: input.contextSelections }
+        : undefined),
+      ...(input.pageSelections?.length ? { pageSelections: input.pageSelections } : undefined),
+    },
     parentId: userMessageParentId,
     role: 'user' as const,
     threadId: appContext?.threadId ?? undefined,

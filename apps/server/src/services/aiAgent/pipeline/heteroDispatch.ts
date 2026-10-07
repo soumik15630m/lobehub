@@ -1,5 +1,4 @@
 import { stripGoalCommand, withConversationGoalPrompt } from '@lobechat/builtin-tool-goal';
-import { LOADING_FLAT } from '@lobechat/const';
 import type { LobeChatDatabase } from '@lobechat/database';
 import type { HeterogeneousAgentType } from '@lobechat/heterogeneous-agents';
 import {
@@ -7,6 +6,7 @@ import {
   isLocalHeterogeneousType,
   isRemoteHeterogeneousType,
 } from '@lobechat/heterogeneous-agents';
+import { buildHeterogeneousConversationContext } from '@lobechat/prompts';
 import type {
   DeviceUnavailableErrorData,
   ErrorType,
@@ -39,6 +39,7 @@ import { hookDispatcher } from '@/server/services/agentRuntime/hooks';
 import type { AgentHook } from '@/server/services/agentRuntime/hooks/types';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { resolveDeviceDispatchAuthorizationFailure } from '@/server/services/deviceGateway/dispatchAuthorization';
+import { FileService } from '@/server/services/file';
 import { HeterogeneousAgentService } from '@/server/services/heterogeneousAgent';
 import type { ConversationHistoryEntry } from '@/server/services/heterogeneousAgent/cloudHeteroContext';
 import { buildCloudHeteroContext } from '@/server/services/heterogeneousAgent/cloudHeteroContext';
@@ -343,7 +344,6 @@ export const dispatchHeteroAgent = async (
     requestTrigger,
     requestedDeviceId,
     runAttachments,
-    selfMessageIds,
     topicStartOwnerOperationId,
   } = input;
 
@@ -451,33 +451,63 @@ export const dispatchHeteroAgent = async (
   // a serialized duplicate. Amp threads are server-backed, so they rely on
   // native continuation exclusively and never need this local-file fallback.
   let conversationHistory: ConversationHistoryEntry[] | undefined;
+  let persistedPromptContext: string | undefined;
+  let persistedImages: Array<{ id: string; url: string }> = [];
   if (heteroType !== 'amp') {
     try {
       // `allowShareVisitor`: this is the RUN's own topic, already resolved
       // and authorized upstream. An agent-share visitor run executes under
       // the creator's identity, so without the opt-in `query()`'s
       // creator-facing default would hand the agent an empty history.
+      const fileService = new FileService(deps.db, deps.userId, deps.workspaceId);
       const recentMsgs = await deps.messageModel.query(
         { topicId, pageSize: 200 },
-        { allowShareVisitor: true },
+        {
+          allowShareVisitor: true,
+          // Database rows carry storage keys; a device CLI needs freshly signed URLs.
+          // MessageModel still enforces attachment ownership before invoking this callback.
+          postProcessUrl: (path) => fileService.getFullFileUrl(path),
+        },
       );
-      const turns = recentMsgs
-        .filter(
-          (m) =>
-            (m.role === 'user' || m.role === 'assistant') &&
-            !m.threadId &&
-            !selfMessageIds.has(m.id) &&
-            m.content &&
-            m.content !== LOADING_FLAT,
-        )
-        .slice(-30)
-        .map((m) => ({
-          content: m.content ?? '',
-          role: m.role as 'assistant' | 'user',
-        }));
-      if (turns.length > 0) conversationHistory = turns;
+      const promptMessageId = userMessageId ?? parentMessageId;
+      const replay = buildHeterogeneousConversationContext(recentMsgs, promptMessageId);
+      if (replay.history.length > 0) conversationHistory = replay.history;
+      persistedPromptContext = replay.currentContext;
+      // The CLI reuses imageList if native resume fails and starts a fresh session.
+      // Keep the bounded ancestor images for both attempts so that fallback has
+      // the same vision inputs as its recovered conversation text.
+      persistedImages = replay.imageList;
     } catch (err) {
       log('execAgent: failed to load conversation history for hetero context: %O', err);
+      if (heteroType === 'codex') {
+        // A fresh edited run cannot safely execute without its persisted context.
+        // Settle the already-created operation through the existing failure path
+        // and retain the user message so the UI can retry after recovery.
+        const message = 'Failed to load conversation context';
+        const terminalReported = await finalizeHeteroDispatchError(deps, {
+          agentId: resolvedAgentId,
+          assistantMessageId,
+          detail: err instanceof Error ? err.message : message,
+          message,
+          operationId,
+          topicId,
+        });
+        return {
+          agentId: resolvedAgentId,
+          assistantMessageId,
+          autoStarted: false,
+          createdAt: new Date().toISOString(),
+          error: message,
+          message,
+          operationId,
+          status: 'error',
+          success: false,
+          terminalReported,
+          timestamp: new Date().toISOString(),
+          topicId,
+          userMessageId: userMessageId ?? parentMessageId ?? '',
+        };
+      }
     }
   }
 
@@ -502,10 +532,16 @@ export const dispatchHeteroAgent = async (
   // retry; successful same-session runs never consume the duplicate history.
   // `/goal` reaches a hetero agent as instructions, not a tool: it creates and
   // plans the goal through `lh` in this same run.
-  const agentSystemContext = withConversationGoalPrompt(
-    agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
-    prompt,
-  );
+  const agentSystemContext =
+    [
+      withConversationGoalPrompt(
+        agentConfig.agencyConfig?.heterogeneousProvider?.systemContext,
+        prompt,
+      ),
+      persistedPromptContext,
+    ]
+      .filter(Boolean)
+      .join('\n\n') || undefined;
   const systemContext = buildCloudHeteroContext({
     agentSystemContext,
     conversationHistory: resumeSessionId ? undefined : conversationHistory,
@@ -528,10 +564,13 @@ export const dispatchHeteroAgent = async (
   // mirrors the local-mode path, where the client feeds the persisted
   // message's imageList into `sendPrompt`. Reuses the shared resolution above
   // so bot/IM and SPA gateway attachments are handled identically.
-  const heteroImageList =
-    runAttachments.imageList && runAttachments.imageList.length > 0
-      ? runAttachments.imageList.map((image) => ({ id: image.id, url: image.url }))
-      : undefined;
+  const images = new Map(
+    [...persistedImages, ...(runAttachments.imageList ?? [])].map((image) => [
+      image.id,
+      { id: image.id, url: image.url },
+    ]),
+  );
+  const heteroImageList = images.size > 0 ? [...images.values()] : undefined;
   const heteroExecArgs = isLocalHeterogeneousType(heteroType)
     ? buildHeteroExecArgs(
         heterogeneousProvider?.type === heteroType

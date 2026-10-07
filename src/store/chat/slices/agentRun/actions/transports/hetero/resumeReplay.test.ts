@@ -1,7 +1,11 @@
 import type { UIChatMessage } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
-import { buildResumeReplayMessages, shouldHydrateResumeReplay } from './resumeReplay';
+import {
+  buildPreviousConversationTurns,
+  buildResumeReplayMessages,
+  shouldHydrateResumeReplay,
+} from './resumeReplay';
 
 const msg = (over: Partial<UIChatMessage>): UIChatMessage =>
   ({ content: '', createdAt: 1_780_000_000_000, id: 'm', role: 'user', ...over }) as UIChatMessage;
@@ -81,5 +85,128 @@ describe('shouldHydrateResumeReplay', () => {
     for (const other of ['codex', 'opencode', 'pi', 'droid', undefined]) {
       expect(shouldHydrateResumeReplay(other)).toBe(false);
     }
+  });
+});
+
+/** @example Fresh edited runs replay the selected ancestry, including tool batches. */
+describe('buildPreviousConversationTurns', () => {
+  /** @example Both tool outputs survive, while later turns and sibling attempts do not. */
+  it('keeps tool results and selected context before the edited user boundary', () => {
+    const messages = [
+      msg({
+        id: 'u1',
+        content: 'Read the selected context',
+        metadata: {
+          contextSelections: [{ id: 'selection', source: 'text', content: 'SELECTED-647' }],
+        },
+      }),
+      msg({
+        id: 'a1',
+        parentId: 'u1',
+        role: 'assistant',
+        tools: [
+          { id: 'call1', apiName: 'shell', arguments: '{}', identifier: 'codex', type: 'default' },
+          { id: 'call2', apiName: 'shell', arguments: '{}', identifier: 'codex', type: 'default' },
+        ],
+      }),
+      msg({
+        id: 't1',
+        parentId: 'a1',
+        role: 'tool',
+        tool_call_id: 'call1',
+        content: 'TOOL-647-ONE',
+      }),
+      msg({
+        id: 't2',
+        parentId: 'a1',
+        role: 'tool',
+        tool_call_id: 'call2',
+        content: 'TOOL-647-TWO',
+      }),
+      msg({ id: 'answer', parentId: 't1', role: 'assistant', content: 'Read both files.' }),
+      msg({ id: 'sibling', parentId: 'u1', role: 'assistant', content: 'SIBLING-SECRET' }),
+      msg({ id: 'edited', parentId: 'answer', content: 'EDITED-647' }),
+      msg({ id: 'current', parentId: 'edited', role: 'assistant' }),
+      msg({ id: 'later', parentId: 'current', content: 'AFTER-BOUNDARY-SECRET' }),
+    ];
+    // ROOT CAUSE:
+    // The text-only filter discarded tool rows and metadata, and parent walking
+    // alone missed the second tool result in the same assistant tool batch.
+    // Fresh edited sessions must replay the completed batch and user selections.
+    const history = JSON.stringify(buildPreviousConversationTurns(messages, 'current'));
+    /** @example Selected text is available to the fresh CLI. */
+    expect(history).toContain('SELECTED-647');
+    /** @example The first historical shell result survives. */
+    expect(history).toContain('TOOL-647-ONE');
+    /** @example A parallel result attached to the same ancestor also survives. */
+    expect(history).toContain('TOOL-647-TWO');
+    /** @example The replaced prompt is sent separately, never replayed as history. */
+    expect(history).not.toContain('EDITED-647');
+    /** @example An unrelated assistant attempt is excluded. */
+    expect(history).not.toContain('SIBLING-SECRET');
+    /** @example No post-boundary content enters the new session. */
+    expect(history).not.toContain('AFTER-BOUNDARY-SECRET');
+  });
+});
+
+/** @example Continuing after an assistant keeps that assistant in the completed history. */
+describe('fresh continuation ancestry', () => {
+  /** @example Only a user boundary is excluded as the separately dispatched prompt. */
+  it('retains a non-user anchor when continuing a fresh run', () => {
+    const history = buildPreviousConversationTurns(
+      [
+        msg({ id: 'question', content: 'Original question' }),
+        msg({ id: 'answer', role: 'assistant', parentId: 'question', content: 'Partial answer' }),
+        msg({ id: 'current', role: 'assistant', parentId: 'answer' }),
+      ],
+      'current',
+    );
+    /** @example The continuation sees both the original user and partial assistant response. */
+    expect(history.map((entry) => entry.content)).toEqual(['Original question', 'Partial answer']);
+  });
+});
+
+/** @example Concurrent shell results remain attributable when they complete out of order. */
+describe('tool result attribution', () => {
+  /** @example The second shell call finishes before the first one. */
+  it('preserves the call ID with each serialized result', () => {
+    const history = buildPreviousConversationTurns(
+      [
+        msg({ id: 'u', content: 'Read two files' }),
+        msg({
+          id: 'a',
+          role: 'assistant',
+          parentId: 'u',
+          tools: [
+            {
+              id: 'first',
+              apiName: 'shell',
+              arguments: '{"file":"red"}',
+              identifier: 'codex',
+              type: 'default',
+            },
+            {
+              id: 'second',
+              apiName: 'shell',
+              arguments: '{"file":"blue"}',
+              identifier: 'codex',
+              type: 'default',
+            },
+          ],
+        }),
+        msg({ id: 't2', role: 'tool', parentId: 'a', tool_call_id: 'second', content: 'BLUE' }),
+        msg({ id: 't1', role: 'tool', parentId: 'a', tool_call_id: 'first', content: 'RED' }),
+        msg({ id: 'edited', parentId: 't1', content: 'Edited question' }),
+        msg({ id: 'current', role: 'assistant', parentId: 'edited' }),
+      ],
+      'current',
+    );
+    // ROOT CAUSE:
+    // Tool bodies survived replay but their tool_call_id did not. Parallel calls
+    // can complete in reverse order; each serialized result must retain its ID.
+    /** @example The blue output belongs to the second call regardless of array position. */
+    expect(history.find((entry) => entry.content === 'BLUE')?.context).toContain('second');
+    /** @example The red output belongs to the first call. */
+    expect(history.find((entry) => entry.content === 'RED')?.context).toContain('first');
   });
 });

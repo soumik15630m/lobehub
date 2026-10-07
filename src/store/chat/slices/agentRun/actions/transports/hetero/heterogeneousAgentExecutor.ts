@@ -27,6 +27,7 @@ import {
   normalizeHeterogeneousMessageError,
 } from '@lobechat/heterogeneous-agents/errors';
 import {
+  buildHeterogeneousConversationContext,
   formatContextSelections,
   formatPageSelections,
   formatPreviousConversation,
@@ -96,11 +97,7 @@ import { getNativeHeteroSessionBindingKey } from './heteroResume';
 import { createMessageWriteBatcher, type ToolMessageUpdateOperation } from './messageWriteBatcher';
 import { createPendingCreateLedger } from './pendingCreateLedger';
 import { resolveQuotaAccountSpawnPlan } from './resolveQuotaAccountEnv';
-import {
-  buildPreviousConversationTurns,
-  buildResumeReplayMessages,
-  shouldHydrateResumeReplay,
-} from './resumeReplay';
+import { buildResumeReplayMessages, shouldHydrateResumeReplay } from './resumeReplay';
 import { buildLobeHubSessionEnv } from './sessionEnv';
 
 /** Mirrors `idGenerator('threads', 16)` on the server so sync-allocated ids have the same shape. */
@@ -2597,10 +2594,31 @@ export const executeHeterogeneousAgent = async (
       },
     });
 
+    // Fresh Codex edits must restore projected tool bodies before serializing history.
+    // The native-resume path still uses its adapter-specific transcript hydration below.
+    const freshHistory =
+      !resumeSessionId && !replayTranscript && heterogeneousProvider.type !== 'amp';
+    const sourceMessages = getCurrentFrontendMessages();
+    const restored = freshHistory
+      ? await hydrateProjectedToolMessages(sourceMessages, messageService.getToolResultPayloads)
+      : { messages: sourceMessages, missing: [] };
+    if (restored.missing.length > 0) throw new Error('Could not restore the previous tool results');
+    const durableContext = buildHeterogeneousConversationContext(
+      restored.messages,
+      sourceMessages.find((row) => row.id === assistantMessageId)?.parentId ?? undefined,
+    );
     const systemContext = buildLocalHeterogeneousSystemContext({
       // `/goal` reaches a hetero agent as instructions, not a tool: it creates
       // and plans the goal through `lh` in this same run.
-      agentSystemContext: withConversationGoalPrompt(heterogeneousProvider.systemContext, message),
+      agentSystemContext:
+        [
+          withConversationGoalPrompt(heterogeneousProvider.systemContext, message),
+          !contextSelections?.length && !pageSelections?.length
+            ? durableContext.currentContext
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join('\n\n') || undefined,
       contextSelections,
       pageSelections,
       // Without a native session to resume (a branched edit, a reset session)
@@ -2614,9 +2632,7 @@ export const executeHeterogeneousAgent = async (
         heterogeneousProvider.type === 'amp' ||
         heterogeneousProvider.systemContext?.includes('<previous_conversation>')
           ? undefined
-          : formatPreviousConversation(
-              buildPreviousConversationTurns(getCurrentFrontendMessages(), assistantMessageId),
-            ),
+          : formatPreviousConversation(durableContext.history),
     });
 
     // When resuming, hand main the prior turns so it can rebuild a Claude Code
@@ -2657,7 +2673,13 @@ export const executeHeterogeneousAgent = async (
     const sendResult = await heterogeneousAgentService.sendPrompt({
       agentId: context.agentId,
       assistantMessageId,
-      imageList,
+      imageList: freshHistory
+        ? [
+            ...new Map(
+              [...durableContext.imageList, ...(imageList ?? [])].map((image) => [image.id, image]),
+            ).values(),
+          ]
+        : imageList,
       userId: userProfileSelectors.userId(getUserStoreState()),
       workspaceId: getActiveWorkspaceId() ?? undefined,
       operationId,
