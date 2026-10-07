@@ -91,6 +91,57 @@ describe('native branch resume binding', () => {
       'unavailable',
     );
   });
+  /** @example Tool execution without assistant text still makes a branch used. */
+  it('refuses to fork again when a tool-only answer has lost all child provenance', async () => {
+    // ROOT CAUSE:
+    // The server ancestry projection dropped tools even though the shared resolver
+    // counts tool-only assistant rows as visible answers. With both durable child
+    // bindings missing, that projection restarted an already-used branch.
+    // Preserve the persisted tool calls so recovery fails closed instead.
+    const recoveredSession = { id: '' };
+    const db = {} as LobeChatDatabase;
+    const messageModel = new MessageModel(db, 'test-user');
+    const threadModel = new ThreadModel(db, 'test-user');
+    const origin = { position: 'after' as const, threadId: 'source-native', turnId: 'source-turn' };
+    vi.spyOn(threadModel, 'findById').mockResolvedValue({
+      id: 'child-thread',
+      topicId: 'source-topic',
+      metadata: { codexForkTarget: origin },
+    } as NonNullable<Awaited<ReturnType<ThreadModel['findById']>>>);
+    vi.spyOn(messageModel, 'findById').mockImplementation(
+      async (id) =>
+        ({
+          id,
+          topicId: 'source-topic',
+          threadId: 'child-thread',
+          parentId: id === 'follow-up' ? 'tool-answer' : null,
+          role: id === 'follow-up' ? 'user' : 'assistant',
+          content: id === 'follow-up' ? 'Continue' : '',
+          error: null,
+          metadata:
+            id === 'tool-answer' && recoveredSession.id
+              ? { heteroSessionId: recoveredSession.id }
+              : {},
+          tools: id === 'tool-answer' ? [{ id: 'shell-call', type: 'shell' }] : null,
+        }) as NonNullable<Awaited<ReturnType<MessageModel['findById']>>>,
+    );
+    const service = new HeterogeneousAgentService(db, 'test-user', {
+      messageModel,
+      threadModel,
+      snapshotStore: null,
+    });
+    /** @example No source resume or Fork target escapes the lost-child guard. */
+    expect(await service.getCodexBranchRun('source-topic', 'follow-up', 'child-thread')).toEqual({
+      codexBranchError:
+        'This Codex branch lost its native session. Fork again from the original message.',
+    });
+    recoveredSession.id = 'child-native';
+    /** @example Restoring the child's own provenance recovers it without replaying tools. */
+    expect(await service.getCodexBranchRun('source-topic', 'follow-up', 'child-thread')).toEqual({
+      resumeSessionId: 'child-native',
+    });
+  });
+
   /** @example Finishing a continuation child cannot replace the source binding or assistant text. */
   it('keeps continuation completion and native binding inside the child', async () => {
     // ROOT CAUSE:

@@ -782,6 +782,8 @@ export class HeterogeneousAgentService {
         role: message.role,
         content: message.content,
         error: message.error,
+        // A tool-only answer has already used the branch even without assistant text.
+        tools: Array.isArray(message.tools) ? message.tools : undefined,
       });
       if (
         message.metadata?.heteroSessionId &&
