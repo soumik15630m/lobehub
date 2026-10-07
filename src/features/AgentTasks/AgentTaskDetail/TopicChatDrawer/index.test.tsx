@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import type { TaskDetailActivity } from '@lobechat/types';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import type { CSSProperties, ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
     activeTaskId: 'T-1',
     activeTopicDrawerTopicId: 'topic-1',
     closeTopicDrawer: vi.fn(),
+    runTask: vi.fn().mockResolvedValue({ operationId: 'op-continued' }),
     useFetchTaskDetail: vi.fn(),
     taskDetailMap: {
       'T-1': {
@@ -79,13 +80,19 @@ vi.mock('@lobehub/ui', async (importOriginal) => ({
     items,
   }: {
     children?: ReactNode;
-    items?: { key: string; label?: ReactNode; onClick?: () => void; type?: string }[];
+    items?: {
+      disabled?: boolean;
+      key: string;
+      label?: ReactNode;
+      onClick?: () => void;
+      type?: string;
+    }[];
   }) => (
     <>
       {children}
       {items?.map((item) =>
         item.type === 'divider' ? null : (
-          <button key={item.key} onClick={item.onClick}>
+          <button disabled={item.disabled} key={item.key} onClick={item.onClick}>
             {item.label}
           </button>
         ),
@@ -289,6 +296,9 @@ describe('TopicChatDrawer', () => {
     });
     mocks.navigate.mockClear();
     mocks.taskState.closeTopicDrawer.mockClear();
+    mocks.taskState.runTask.mockReset().mockResolvedValue({ operationId: 'op-continued' });
+    mocks.taskState.taskDetailMap['T-1'].agentId = 'agt_assignee';
+    mocks.taskState.taskDetailMap['T-1'].status = 'completed';
     mocks.taskState.activeTopicDrawerTopicId = 'topic-1';
     mocks.taskState.taskDetailMap['T-1'].activities[0] = {
       id: 'topic-1',
@@ -300,6 +310,82 @@ describe('TopicChatDrawer', () => {
     mocks.permission.allowed = true;
     mocks.serverConfigState.serverConfig.enableBusinessFeatures = false;
     vi.mocked(useGatewayReconnect).mockClear();
+  });
+
+  /** @example Continue applies Task configuration to this existing Topic through task.run. */
+  it('continues the Task in the open Topic without closing the receipt inspector', async () => {
+    // ROOT CAUSE:
+    //
+    // The UI offered only Run (new Topic) and ordinary Topic follow-up.
+    // Neither called the existing Task continuation API with continueTopicId.
+    // The drawer menu now calls runTask with the current Task and Topic IDs.
+    const view = render(<TopicChatDrawer />);
+    fireEvent.click(view.getByRole('button', { name: 'taskDetail.topicMenu.continueTask' }));
+    await waitFor(() => {
+      /** @example No replacement Topic is requested. */
+      expect(mocks.taskState.runTask).toHaveBeenCalledWith(
+        'T-1',
+        { continueTopicId: 'topic-1' },
+        { throwOnError: true },
+      );
+    });
+    /** @example The mounted inspector stays available for the new operation receipt. */
+    expect(mocks.taskState.closeTopicDrawer).not.toHaveBeenCalled();
+  });
+
+  /** @example Double-clicking Continue starts only one pending request. */
+  it('blocks duplicate continuation while the first request is pending', async () => {
+    let finish = () => {};
+    mocks.taskState.runTask.mockReturnValue(
+      new Promise((resolve) => {
+        finish = () => resolve({ operationId: 'op-continued' });
+      }),
+    );
+    const view = render(<TopicChatDrawer />);
+    const button = view.getByRole('button', { name: 'taskDetail.topicMenu.continueTask' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    /** @example Pending execution keeps the action disabled. */
+    expect(button).toBeDisabled();
+    /** @example No second dispatch creates a conflicting run. */
+    expect(mocks.taskState.runTask).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => {
+      /** @example A settled request releases its local pending state. */
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  /** @example View-only members cannot start a Task continuation. */
+  it('does not continue without Task edit permission', () => {
+    mocks.permission.allowed = false;
+    const view = render(<TopicChatDrawer />);
+    const button = view.getByRole('button', { name: 'taskDetail.topicMenu.continueTask' });
+    /** @example The menu reflects the authorization gate. */
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    /** @example No dispatch crosses the disabled gate. */
+    expect(mocks.taskState.runTask).not.toHaveBeenCalled();
+  });
+
+  /** @example Running or scheduled Tasks remain owned by their active scheduler. */
+  it.each(['running', 'scheduled'])('does not continue a %s Task', (status) => {
+    mocks.taskState.taskDetailMap['T-1'].status = status;
+    const view = render(<TopicChatDrawer />);
+    /** @example Continue uses the same eligibility selector as the Task Run action. */
+    expect(view.getByRole('button', { name: 'taskDetail.topicMenu.continueTask' })).toBeDisabled();
+  });
+
+  /** @example A descendant or reassigned Agent cannot resume the old assignee Topic. */
+  it('does not continue a Topic belonging to another Agent', () => {
+    mocks.taskState.taskDetailMap['T-1'].activities[0].author = {
+      id: 'other-agent',
+      type: 'agent',
+      name: 'Other',
+    };
+    const view = render(<TopicChatDrawer />);
+    /** @example The Topic author must match the current Task assignee. */
+    expect(view.getByRole('button', { name: 'taskDetail.topicMenu.continueTask' })).toBeDisabled();
   });
 
   // The run drawer also mounts on the home inbox, where the chat store has no
