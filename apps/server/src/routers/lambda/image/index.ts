@@ -173,6 +173,7 @@ export const imageRouter = router({
         try {
           const resignedUrls = await resignOwnStorageReferenceUrls(params.imageUrls, {
             db: serverDB,
+            fileAccessScope: ctx.fileAccessScope,
             fileService,
             userId,
             workspaceId: wsId,
@@ -186,6 +187,7 @@ export const imageRouter = router({
         try {
           const [resignedUrl] = await resignOwnStorageReferenceUrls([params.imageUrl], {
             db: serverDB,
+            fileAccessScope: ctx.fileAccessScope,
             fileService,
             userId,
             workspaceId: wsId,
