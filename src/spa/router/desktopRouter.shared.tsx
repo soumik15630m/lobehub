@@ -1017,7 +1017,8 @@ export const sharedMainAreaChildren: RouteObject[] = [
         path: ':dashboardId',
       },
     ],
-    // Off unless the `dashboard` feature flag is on: the gate leaves for home.
+    // Personal-only, and off unless the `dashboard` feature flag is on: the gate
+    // leaves for home inside a workspace or while the flag is off.
     element: dynamicLayout(
       () => import('@/routes/(main)/dashboard/_layout'),
       'Desktop > Dashboards > Layout',
