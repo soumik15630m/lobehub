@@ -182,10 +182,10 @@ describe('agent document modifyNodes regressions', () => {
     expect(twice.content).toBe('# T\n\n- one\n- two v3\n- three\n');
   });
 
-  // Upstream @lobehub/editor re-parses a modified node without keeping its key,
-  // so the id changes after every modify. A stale id in a later batch is now
-  // rejected loudly (R5); keeping the id needs the editor dependency to change.
-  it.fails('R7b modifying a <li> keeps its id', async () => {
+  // @lobehub/editor >= 4.29.2 keeps the node key when re-parsing a modified
+  // node, so the id survives a modify. Earlier editor versions dropped it
+  // (A stale id in a later batch is rejected loudly per R5).
+  it('R7b modifying a <li> keeps its id', async () => {
     const base = await load('# T\n\n- one\n- two\n- three\n');
     const id = liId(base.litexml!, 'two');
     const once = await editThenRead(base, [
