@@ -67,6 +67,7 @@ overrides:
   '@lobehub/editor': https://pkg.pr.new/%40lobehub%2Feditor%406a85671
   '@lobehub/charts': https://pkg.pr.new/@lobehub/charts@7299e60
   '@lobehub/tts': https://pkg.pr.new/@lobehub/tts@8d29894
+  '@lobehub/fluent-emoji': https://pkg.pr.new/@lobehub/fluent-emoji@ad41eee
   '@react-pdf/image': 3.0.4
   '@types/react': 19.2.13
   '@vitest/coverage-v8': 5.0.0
