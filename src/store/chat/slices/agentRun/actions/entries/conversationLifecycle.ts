@@ -1847,9 +1847,12 @@ export class ConversationLifecycleActionImpl {
           message,
           // The server persists the user row on this path, so a queued
           // follow-up's steer mark must travel with the request.
-          metadata: (metadata as Pick<MessageMetadata, 'steer'> | undefined)?.steer
-            ? { ...requestMetadata, steer: true }
-            : requestMetadata,
+          metadata: {
+            ...requestMetadata,
+            ...(metadata?.steer ? { steer: true } : undefined),
+            contextSelections: userMessageMetadata?.contextSelections,
+            pageSelections: userMessageMetadata?.pageSelections,
+          },
           onMessageAccepted: notifyMessageAccepted,
           onTopicCreated: context.isolatedTopic ? onTopicCreated : undefined,
           parentOperationId: operationId,

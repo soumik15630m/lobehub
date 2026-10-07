@@ -6200,5 +6200,43 @@ describe('ConversationLifecycle actions', () => {
       // and the client-side post-persist title hook was NOT reached
       expect(summaryTopicTitleSpy).not.toHaveBeenCalled();
     });
+    /** @example A selection in the composer reaches the persistent Gateway request. */
+    it('retains gateway selections while preparing the device send', async () => {
+      const { result } = renderHook(() => useChatStore());
+
+      const summaryTopicTitleSpy = vi.fn().mockResolvedValue(undefined);
+      const executeGatewayAgentSpy = vi.fn().mockResolvedValue({
+        assistantMessageId: TEST_IDS.ASSISTANT_MESSAGE_ID,
+        operationId: 'op-gateway',
+        userMessageId: TEST_IDS.USER_MESSAGE_ID,
+      });
+
+      act(() => {
+        useChatStore.setState({
+          executeGatewayAgent: executeGatewayAgentSpy,
+          isGatewayModeEnabled: () => true,
+          summaryTopicTitle: summaryTopicTitleSpy,
+        });
+      });
+
+      await act(async () => {
+        await result.current.sendMessage({
+          context: createTestContext(),
+          message: TEST_CONTENT.USER_MESSAGE,
+          contextSelections: [{ id: 'selection', source: 'text', content: 'SELECTED-ONLY' }],
+        });
+      });
+
+      // gateway routing was actually taken (precondition for the assertion below)
+      expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            contextSelections: [{ id: 'selection', source: 'text', content: 'SELECTED-ONLY' }],
+          }),
+        }),
+      );
+      // and the client-side post-persist title hook was NOT reached
+      expect(summaryTopicTitleSpy).not.toHaveBeenCalled();
+    });
   });
 });
