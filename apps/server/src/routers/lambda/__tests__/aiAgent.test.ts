@@ -219,6 +219,33 @@ describe('AI Agent Router Integration Tests', () => {
       expect(createOperationCalls()).toEqual([false, false]);
     });
 
+    /** @example The public Gateway API saves selections for later device Edit/Resend. */
+    it('persists gateway selections through the public request schema', async () => {
+      // ROOT CAUSE:
+      // The schema and router mapping omitted selections, although the composer displayed them.
+      // Assert the database row so a dropped field anywhere in the request path is caught.
+      const caller = aiAgentRouter.createCaller(createTestContext());
+      const contextSelections = [
+        { id: 'selection', source: 'text' as const, content: 'SELECTED-ONLY' },
+      ];
+      const pageSelections = [{ id: 'page-selection', pageId: 'page-1', content: 'PAGE-ONLY' }];
+      const result = await caller.execAgent({
+        agentId: testAgentId,
+        prompt: 'Use selected text',
+        contextSelections,
+        pageSelections,
+      });
+      const rows = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.topicId, result.topicId));
+      /** @example The user message retains both kinds of context after a database read. */
+      expect(rows.find((row) => row.role === 'user')?.metadata).toMatchObject({
+        contextSelections,
+        pageSelections,
+      });
+    });
+
     it('should create a new topic when topicId is not provided', async () => {
       const caller = aiAgentRouter.createCaller(createTestContext());
 

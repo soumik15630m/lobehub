@@ -73,11 +73,12 @@ describe('useActionsBarConfig', () => {
     expect(result.current.user?.menu).toContain('edit');
   });
 
-  /** @example Web and remote execution cannot submit a local-only edit operation. */
-  it('hides Edit when the resolved Codex runtime is Web, sandbox, or remote device', () => {
+  /** @example Only executable local or bound-device targets advertise Edit. */
+  it('offers device Edit while keeping unbound Web and sandbox unavailable', () => {
     // ROOT CAUSE:
-    // Provider-only slots advertised Edit even when dispatch selected gateway,
-    // where the local edit path always rejects. Resolve the same execution target.
+    // Provider-only slots originally advertised Edit even when gateway editing
+    // was unsupported. The device dispatch now hydrates durable edit context;
+    // unbound Web and sandbox still have no supported edit execution target.
     const { result, rerender } = renderHook(() => useActionsBarConfig());
     runtime.isDesktop = false;
     rerender();
@@ -99,8 +100,10 @@ describe('useActionsBarConfig', () => {
         }),
       );
       rerender();
-      /** @example Both remote destinations keep only their supported user actions. */
-      expect(result.current.user?.bar).toEqual(['copy']);
+      /** @example A bound device can edit; sandbox keeps its existing copy action. */
+      expect(result.current.user?.bar).toEqual(
+        executionTarget === 'device' ? ['edit', 'copy'] : ['copy'],
+      );
     }
   });
 

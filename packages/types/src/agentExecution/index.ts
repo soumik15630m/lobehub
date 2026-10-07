@@ -4,7 +4,7 @@ import type { LobeAgentChatConfig } from '../agent/chatConfig';
 import type { CreateThreadWithMessageParams } from '../aiChat';
 import type { DeviceUnavailableErrorData } from '../device';
 import { workingDirConfigSchema } from '../device';
-import type { TaskDetail, UIChatMessage } from '../message';
+import type { ContextSelection, PageSelection, TaskDetail, UIChatMessage } from '../message';
 import type { ChatTopic } from '../topic';
 
 export * from './credentialFacts';
@@ -313,6 +313,8 @@ export interface ExecAgentParams {
    * pushing whole `uiMessages` snapshots to it. Absent ⇒ 1.
    */
   clientProtocol?: 1 | 2;
+  /** Selected context persisted with a fresh user message for replay after editing. */
+  contextSelections?: ContextSelection[];
   /** Explicit device ID to bind to the topic and activate for this run */
   deviceId?: string;
   /** Optional existing message IDs to include in context */
@@ -339,6 +341,8 @@ export interface ExecAgentParams {
   localDeviceId?: string;
   /** Override the agent's default model */
   model?: string;
+  /** Selected page excerpts persisted with a fresh user message. */
+  pageSelections?: PageSelection[];
   /**
    * Parent operation ID when this run is a sub-agent invocation. Forwarded
    * to `agent_operations.parent_operation_id` so analytics can join the

@@ -1,6 +1,13 @@
+export * from './fromMessages';
+
+/** One completed dialogue or tool-result entry for a fresh native session. */
 export interface ConversationHistoryEntry {
+  /** Dialogue text or the completed tool result. */
   content: string;
-  role: 'assistant' | 'user';
+  /** Persisted selection and attachment context, separate from dialogue truncation. */
+  context?: string;
+  /** Original role, retained so tool output is never presented as a user instruction. */
+  role: 'assistant' | 'tool' | 'user';
 }
 
 export interface PreviousConversationOptions {
@@ -18,7 +25,7 @@ const formatEntry = (entry: ConversationHistoryEntry) => {
   const limit = entry.role === 'user' ? USER_MAX : ASSISTANT_MAX;
   const body =
     entry.content.length > limit ? `${entry.content.slice(0, limit)}… [truncated]` : entry.content;
-  return `<${entry.role}>\n${body}\n</${entry.role}>`;
+  return `<${entry.role}>\n${[body, entry.context].filter(Boolean).join('\n\n')}\n</${entry.role}>`;
 };
 
 /**

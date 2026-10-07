@@ -92,6 +92,7 @@ const LAST_MESSAGE_PREVIEW_LENGTH = 2000;
 const BRANCH_TOPIC_METADATA_KEYS = [
   'boundDeviceId',
   'heteroEffort',
+  'heteroSpeed',
   'reasoningConfig',
   'repos',
   'workingDirectory',

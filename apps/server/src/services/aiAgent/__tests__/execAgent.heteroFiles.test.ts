@@ -14,6 +14,7 @@ const {
   mockExecuteToolCall,
   mockInterruptOperation,
   mockGetHeterogeneousResumeSessionId,
+  mockGetFullFileUrl,
   mockMessageCreate,
   mockMessageQuery,
   mockMessageUpdate,
@@ -31,6 +32,7 @@ const {
   mockExecuteToolCall: vi.fn().mockResolvedValue({ success: true }),
   mockInterruptOperation: vi.fn().mockResolvedValue(true),
   mockGetHeterogeneousResumeSessionId: vi.fn().mockResolvedValue(undefined),
+  mockGetFullFileUrl: vi.fn(async (path: string) => `https://files.test/signed/${path}`),
   mockIngestAttachment: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockMessageQuery: vi.fn(),
@@ -70,7 +72,7 @@ const emptyResolvedAttachments = {
 
 vi.mock('@/server/services/file', () => ({
   FileService: vi.fn().mockImplementation(function () {
-    return {};
+    return { getFullFileUrl: mockGetFullFileUrl };
   }),
 }));
 
@@ -93,6 +95,7 @@ vi.mock('@/database/models/message', () => ({
   MessageModel: vi.fn().mockImplementation(function () {
     return {
       create: mockMessageCreate,
+      findById: vi.fn(async (id: string) => ({ id, role: 'user', topicId: 'topic-1' })),
       getLatestNonToolMessageId: vi.fn().mockResolvedValue(undefined),
       getLatestSpineMessageId: vi.fn().mockResolvedValue(undefined),
       query: mockMessageQuery,
@@ -769,8 +772,13 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     mockGetHeterogeneousResumeSessionId.mockResolvedValue('cloud-session-existing');
     mockMessageQuery.mockResolvedValue([
       { content: 'Earlier cloud question', id: 'old-user', role: 'user' },
-      { content: 'Earlier cloud answer', id: 'old-assistant', role: 'assistant' },
-      { content: 'Continue in cloud', id: 'msg-1', role: 'user' },
+      {
+        content: 'Earlier cloud answer',
+        id: 'old-assistant',
+        parentId: 'old-user',
+        role: 'assistant',
+      },
+      { content: 'Continue in cloud', id: 'msg-1', parentId: 'old-assistant', role: 'user' },
     ]);
     heteroAgentConfig.agencyConfig = {
       executionTarget: 'sandbox',
@@ -946,8 +954,8 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
     mockGetHeterogeneousResumeSessionId.mockResolvedValue('native-session-existing');
     mockMessageQuery.mockResolvedValue([
       { content: 'Earlier question', id: 'old-user', role: 'user' },
-      { content: 'Earlier answer', id: 'old-assistant', role: 'assistant' },
-      { content: 'Continue on my device', id: 'msg-1', role: 'user' },
+      { content: 'Earlier answer', id: 'old-assistant', parentId: 'old-user', role: 'assistant' },
+      { content: 'Continue on my device', id: 'msg-1', parentId: 'old-assistant', role: 'user' },
     ]);
     heteroAgentConfig.agencyConfig = {
       boundDeviceId: 'device-1',
@@ -985,8 +993,13 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
   it('injects recent conversation history when a device run must start fresh', async () => {
     mockMessageQuery.mockResolvedValue([
       { content: 'Create the GPU pod', id: 'old-user', role: 'user' },
-      { content: 'The pod is electron-gpu-shell', id: 'old-assistant', role: 'assistant' },
-      { content: 'Delete it', id: 'msg-1', role: 'user' },
+      {
+        content: 'The pod is electron-gpu-shell',
+        id: 'old-assistant',
+        parentId: 'old-user',
+        role: 'assistant',
+      },
+      { content: 'Delete it', id: 'msg-1', parentId: 'old-assistant', role: 'user' },
     ]);
     heteroAgentConfig.agencyConfig = {
       boundDeviceId: 'device-1',
@@ -1013,6 +1026,189 @@ describe('AiAgentService.execAgent - hetero early-exit file attachments', () => 
         { content: 'The pod is electron-gpu-shell', role: 'assistant' },
       ],
     });
+  });
+
+  /** @example Device selections survive the server-created user row and later Edit. */
+  it('persists gateway selections on the user message for device editing', async () => {
+    // ROOT CAUSE:
+    // Gateway sends persisted only trigger/steer, dropping the composer's selections.
+    // A fresh edited session cannot recover context that was never stored.
+    const contextSelections = [
+      { id: 'selected', source: 'text' as const, content: 'SELECTED-ONLY' },
+    ];
+    const pageSelections = [{ id: 'page-selected', pageId: 'page-1', content: 'PAGE-ONLY' }];
+    await service.execAgent({
+      agentId: 'agent-1',
+      prompt: 'Use my selection',
+      contextSelections,
+      pageSelections,
+    });
+    /** @example The durable user row, not only the live request, owns both selection forms. */
+    expect(mockMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        metadata: expect.objectContaining({ contextSelections, pageSelections }),
+      }),
+      undefined,
+    );
+  });
+
+  /** @example A fresh edited device run resolves durable attachments and context after refresh. */
+  it('dispatches only the edited boundary ancestry and its persisted attachments', async () => {
+    Object.assign(heteroAgentConfig.agencyConfig, {
+      boundDeviceId: 'device-1',
+      executionTarget: 'device',
+      heterogeneousProvider: { type: 'codex' },
+    });
+    mockMessageQuery.mockResolvedValue([
+      {
+        id: 'old-user',
+        role: 'user',
+        content: 'Remember this image',
+        imageList: [{ id: 'red-circle', alt: 'red circle', url: 'https://files.test/red.png' }],
+      },
+      {
+        id: 'old-assistant',
+        parentId: 'old-user',
+        role: 'assistant',
+        content: '',
+        tools: [{ id: 'call-1', apiName: 'shell', arguments: '{}', identifier: 'codex' }],
+      },
+      {
+        id: 'old-tool',
+        parentId: 'old-assistant',
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: 'DEVICE-TOOL-647',
+      },
+      {
+        id: 'edited',
+        parentId: 'old-tool',
+        role: 'user',
+        content: 'Edited question',
+        imageList: [{ id: 'blue-square', alt: 'blue square', url: 'https://files.test/blue.png' }],
+        metadata: {
+          contextSelections: [{ id: 'selected', source: 'text', content: 'DEVICE-SELECTION-647' }],
+        },
+      },
+      { id: 'later', parentId: 'edited', role: 'assistant', content: 'AFTER-BOUNDARY-647' },
+    ]);
+    // ROOT CAUSE:
+    // The gateway re-run carried only the text. Its recovery loader filtered out
+    // tool rows and replayed the edited prompt and later attempts as old history.
+    // Persisted attachment/context lookup and the same ancestry builder as local
+    // editing make the device path survive a refresh and first-run failure.
+    await service.execAgent({
+      agentId: 'agent-1',
+      appContext: { topicId: 'topic-1' },
+      parentMessageId: 'edited',
+      prompt: 'Edited question',
+      resume: true,
+    });
+    /** @example The device receives both historical and current images for actual vision input. */
+    expect(mockDispatchAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        imageList: [
+          { id: 'red-circle', url: 'https://files.test/red.png' },
+          { id: 'blue-square', url: 'https://files.test/blue.png' },
+        ],
+      }),
+    );
+    const queryOptions = mockMessageQuery.mock.calls.at(-1)?.[1];
+    /** @example Device replay resolves persisted storage keys with the authorized file service. */
+    expect(await queryOptions.postProcessUrl('persisted-red.png')).toBe(
+      'https://files.test/signed/persisted-red.png',
+    );
+    /** @example The attachment resolver receives the original persisted key. */
+    expect(mockGetFullFileUrl).toHaveBeenCalledWith('persisted-red.png');
+    const context = mockBuildRemoteDeviceHeteroContext.mock.calls[0][0];
+    /** @example Current selected text is passed independently of the user's edited prompt. */
+    expect(context.agentSystemContext).toContain('DEVICE-SELECTION-647');
+    const history = JSON.stringify(context.conversationHistory);
+    /** @example Historical shell output reaches the fresh native session. */
+    expect(history).toContain('DEVICE-TOOL-647');
+    /** @example The prompt being executed is not duplicated as a historical turn. */
+    expect(history).not.toContain('Edited question');
+    /** @example Later attempts cannot leak across the chosen edit boundary. */
+    expect(history).not.toContain('AFTER-BOUNDARY-647');
+  });
+
+  /** @example An unreadable edited history fails safely and the same persisted user can retry. */
+  it('does not dispatch Codex with silently missing durable context', async () => {
+    Object.assign(heteroAgentConfig.agencyConfig, {
+      boundDeviceId: 'device-1',
+      executionTarget: 'device',
+      heterogeneousProvider: { type: 'codex' },
+    });
+    const completeOperationSpy = vi
+      .spyOn(CompletionLifecycle.prototype, 'completeOperation')
+      .mockResolvedValue(undefined);
+    mockMessageQuery.mockRejectedValueOnce(new Error('History unavailable'));
+    // ROOT CAUSE:
+    // Context query/signing failures were swallowed after recordStart, dispatching
+    // a fresh CLI with no history. Fail through the existing terminal lifecycle
+    // so the persisted prompt can be retried without a stranded operation.
+    const params = {
+      agentId: 'agent-1',
+      appContext: { topicId: 'topic-1' },
+      parentMessageId: 'edited',
+      prompt: 'Edited question',
+      resume: true,
+    };
+    const result = await service.execAgent(params);
+    /** @example No native session is created with incomplete context. */
+    expect(mockDispatchAgentRun).not.toHaveBeenCalled();
+    /** @example The client receives a retryable failed run, not a false started result. */
+    expect(result).toMatchObject({ success: false, status: 'error', userMessageId: 'edited' });
+    /** @example The previously started operation reaches the normal terminal error path. */
+    expect(completeOperationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: result.operationId }),
+      'error',
+      { skipErrorMessageWrite: true },
+    );
+    await service.execAgent(params);
+    /** @example Once the query recovers the same persisted user can dispatch. */
+    expect(mockDispatchAgentRun).toHaveBeenCalledOnce();
+    completeOperationSpy.mockRestore();
+  });
+
+  /** @example Native resume can fall back to fresh execution without losing older images. */
+  it('retains ancestor images in the payload used by native resume fallback', async () => {
+    Object.assign(heteroAgentConfig.agencyConfig, {
+      boundDeviceId: 'device-1',
+      executionTarget: 'device',
+      heterogeneousProvider: { type: 'codex' },
+    });
+    mockGetHeterogeneousResumeSessionId.mockResolvedValue('unavailable-native-session');
+    mockMessageQuery.mockResolvedValue([
+      {
+        id: 'old',
+        role: 'user',
+        content: 'Remember the image',
+        imageList: [{ id: 'red', url: 'https://files.test/red.png' }],
+      },
+      { id: 'answer', role: 'assistant', parentId: 'old', content: 'Remembered' },
+      { id: 'edited', role: 'user', parentId: 'answer', content: 'Edited question' },
+    ]);
+    // ROOT CAUSE:
+    // The CLI's resume-to-fresh retry reuses imageList. Dropping ancestor images
+    // for the first native attempt also removed them from its fresh fallback.
+    await service.execAgent({
+      agentId: 'agent-1',
+      appContext: { topicId: 'topic-1' },
+      parentMessageId: 'edited',
+      prompt: 'Edited question',
+      resume: true,
+    });
+    /** @example Fallback text and actual vision input travel together to the same CLI. */
+    expect(mockDispatchAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageList: [{ id: 'red', url: 'https://files.test/red.png' }],
+        resumeFallbackSystemContext: 'device recovery context',
+        resumeSessionId: 'unavailable-native-session',
+      }),
+    );
   });
 
   it('dispatches OpenCode to a bound device with its model args', async () => {

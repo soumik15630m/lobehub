@@ -1228,3 +1228,22 @@ describe('applyTopicModelToHeterogeneousProvider - effort pin', () => {
     expect(applyTopicModelToHeterogeneousProvider(config, { effort: 'high' })).toBe(config);
   });
 });
+
+/** @example A topic's explicit Standard speed remains pinned after Edit creates a fresh topic. */
+describe('edited topic speed inheritance', () => {
+  /** @example Standard removes both structured Fast and legacy service_tier arguments. */
+  it('keeps Standard when the owning Agent defaults to Fast', () => {
+    const topicPin = { model: 'gpt-5.5', provider: 'codex', speed: 'default' as const };
+    const config: HeterogeneousProviderConfig = {
+      type: 'codex',
+      model: 'gpt-5.5',
+      speed: 'fast',
+      args: ['-c', 'service_tier="fast"'],
+    };
+    const effective = applyTopicModelToHeterogeneousProvider(config, topicPin);
+    /** @example Explicit Standard must not fall through to the agent's Fast value. */
+    expect(resolveCodexSpeedMode(effective)).toBe('default');
+    /** @example Device CLI arguments cannot reintroduce Fast from legacy args. */
+    expect(buildHeteroExecArgs(effective).join(' ')).not.toContain('fast');
+  });
+});

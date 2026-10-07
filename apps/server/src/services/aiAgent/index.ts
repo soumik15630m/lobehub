@@ -1231,6 +1231,8 @@ export class AiAgentService {
         appContext,
         assistantAgentId,
         attachedFileIds,
+        contextSelections: params.contextSelections,
+        pageSelections: params.pageSelections,
         batchApprovalAnchorId,
         botContext,
         botSender,

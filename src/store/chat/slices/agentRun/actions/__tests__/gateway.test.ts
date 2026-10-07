@@ -1442,6 +1442,46 @@ describe('GatewayActionImpl', () => {
       );
     });
 
+    /** @example Selected text is part of the server request even in device Gateway mode. */
+    it('forwards gateway selections to the persistent execution API', async () => {
+      const { action } = createExecuteTestAction();
+
+      vi.mocked(aiAgentService.execAgentTask).mockResolvedValue({
+        agentId: 'agent-1',
+        assistantMessageId: 'ast-1',
+        autoStarted: true,
+        createdAt: new Date().toISOString(),
+        message: 'ok',
+        operationId: 'server-op-1',
+        status: 'created',
+        success: true,
+        timestamp: new Date().toISOString(),
+        token: 'test-token',
+        topicId: 'topic-1',
+        userMessageId: 'usr-1',
+      });
+
+      await action.executeGatewayAgent({
+        context: { agentId: 'agent-1', topicId: 'topic-1', threadId: null, scope: 'main' },
+        message: 'Hello',
+        metadata: {
+          trigger: RequestTrigger.Onboarding,
+          contextSelections: [{ id: 'selection', source: 'text', content: 'SELECTED-ONLY' }],
+          pageSelections: [{ id: 'page-selection', pageId: 'page-1', content: 'PAGE-ONLY' }],
+        },
+      });
+
+      expect(aiAgentService.execAgentTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: 'Hello',
+          trigger: 'onboarding',
+          contextSelections: [{ id: 'selection', source: 'text', content: 'SELECTED-ONLY' }],
+          pageSelections: [{ id: 'page-selection', pageId: 'page-1', content: 'PAGE-ONLY' }],
+        }),
+        expect.anything(),
+      );
+    });
+
     // Regression: a queued follow-up lost its steer mark on the gateway path, so
     // the row the server persisted rendered as a new turn instead of a
     // continuation of the interrupted one.

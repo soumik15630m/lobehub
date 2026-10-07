@@ -1642,6 +1642,7 @@ describe('TopicModel', () => {
       const topic = await topicModel.create({
         metadata: {
           heteroEffort: 'high',
+          heteroSpeed: 'default',
           heteroSessionId: 'codex-thread-source',
           runningOperation: { operationId: 'op-source' } as any,
           workingDirectory: '/repo',
@@ -1712,7 +1713,12 @@ describe('TopicModel', () => {
       expect(link?.fileId).toBe('br-file');
 
       // Run configuration survives; the source's native session does not.
-      expect(result!.topic.metadata).toEqual({ heteroEffort: 'high', workingDirectory: '/repo' });
+      /** @example An explicit Standard pin survives without carrying source native session state. */
+      expect(result!.topic.metadata).toEqual({
+        heteroEffort: 'high',
+        heteroSpeed: 'default',
+        workingDirectory: '/repo',
+      });
       expect(result!.topic.title).toBe('fixed prompt');
 
       const source = await serverDB.select().from(messages).where(eq(messages.topicId, topic.id));
