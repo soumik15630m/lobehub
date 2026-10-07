@@ -30,6 +30,7 @@ import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwar
 import { sandboxStorageService } from '@/services/sandboxStorage';
 
 import OptionRow from './OptionRow';
+import { usePendingIds } from './usePendingIds';
 import type { SandboxSelection } from './useSandboxMode';
 import { workingDirectoryChipStyles } from './workingDirectoryChipStyles';
 
@@ -203,9 +204,8 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
     // "working directory" would be one more pair to keep in step.
     const { t } = useTranslation(['chat', 'device', 'setting']);
     const [open, setOpen] = useState(false);
-    // Instances whose run is being stopped from this menu. A set, not one id:
-    // two stops can overlap, and the first to settle must not clear the other.
-    const [stoppingIds, setStoppingIds] = useState<ReadonlySet<string>>(() => new Set());
+    // Instances whose run is being stopped from this menu.
+    const stopping = usePendingIds();
     const canEdit = useCanEditEnvironment();
     const navigate = useWorkspaceAwareNavigate();
 
@@ -324,7 +324,7 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
         content: tSetting('environments.instances.stopConfirmContent'),
         okText: tSetting('environments.instances.stop'),
         onOk: () => {
-          setStoppingIds((ids) => new Set(ids).add(instance.id));
+          stopping.add(instance.id);
           // Refreshed either way — a refusal may land after the run ended on
           // its own — and the row stays busy until the refreshed list is in,
           // so it never reads free on the toast and locked on the row.
@@ -345,13 +345,7 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
                 describeError(error, tSetting, tSetting('environments.instances.stopFailed')),
               ),
             )
-            .finally(() =>
-              setStoppingIds((ids) => {
-                const next = new Set(ids);
-                next.delete(instance.id);
-                return next;
-              }),
-            );
+            .finally(() => stopping.remove(instance.id));
         },
         title: tSetting('environments.instances.stopConfirmTitle', { name: instance.name }),
       });
@@ -384,7 +378,7 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
       // as on the settings row. A colleague's run in a published environment
       // is theirs to finish, and this menu only explains the wait.
       const stoppable = occupied && !preparing && !!environment && canEdit(environment);
-      const stopping = stoppingIds.has(instance.id);
+      const isStopping = stopping.has(instance.id);
 
       return (
         <OptionRow
@@ -411,7 +405,7 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
               <DropdownMenu
                 items={[
                   {
-                    disabled: stopping,
+                    disabled: isStopping,
                     icon: CircleStopIcon,
                     key: 'stop',
                     label: t('sandboxStorage.stop'),
@@ -420,9 +414,9 @@ const SandboxInstancePicker = memo<SandboxInstancePickerProps>(
                 ]}
               >
                 <ActionIcon
-                  disabled={stopping}
+                  disabled={isStopping}
                   icon={MoreVerticalIcon}
-                  loading={stopping}
+                  loading={isStopping}
                   size={'small'}
                 />
               </DropdownMenu>
