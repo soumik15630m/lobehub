@@ -1,5 +1,6 @@
 import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
 import type { UIChatMessage } from '@lobechat/types';
+import * as BaseUi from '@lobehub/ui/base-ui';
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 
@@ -14,6 +15,11 @@ import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { type ConversationContext, type ConversationHooks } from '../../../types';
 import { createStore } from '../../index';
 import { MAX_HETERO_AUTO_RETRIES } from './heteroRetryConfig';
+
+vi.mock('@lobehub/ui/base-ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof BaseUi>()),
+  toast: { info: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock('@/services/topic', () => ({ topicService: { cancelRateLimitContinuation: vi.fn() } }));
 
@@ -2085,7 +2091,12 @@ describe('Generation Actions', () => {
           store.setState({
             dbMessages: [...messages, { ...messages[1], id: 'failed-placeholder' }],
           });
-          return { success: false, autoStarted: false };
+          return {
+            success: false,
+            autoStarted: false,
+            status: 'error',
+            error: 'Native turn boundary is unavailable',
+          };
         });
         await store.getState().regenerateUserMessage('user-A');
         /** @example Placeholder creation does not mean that a replacement answer started. */
@@ -2095,6 +2106,11 @@ describe('Generation Actions', () => {
         ]);
         expect(store.getState().dbMessages).toContain(messages[1]);
         expect(mockDeleteMessage).not.toHaveBeenCalled();
+        // ROOT CAUSE:
+        // Restoring the old branch hid the error placeholder, making a device rejection look
+        // like a no-op. Keep the old reply visible and separately report the failure.
+        /** @example The refusal remains actionable while the original answer stays selected. */
+        expect(BaseUi.toast.error).toHaveBeenCalledWith('Native turn boundary is unavailable');
       },
     );
 
