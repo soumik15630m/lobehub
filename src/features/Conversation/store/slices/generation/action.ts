@@ -671,6 +671,8 @@ const regenerateUserMessageFromSource = async (
       replyStarted = result.autoStarted;
       if (!replyStarted) {
         await restoreBranch(false);
+        // The rejected placeholder is no longer selected; keep its failure visible separately.
+        if (result.status === 'error') toast.error(result.error ?? result.message);
         settleGenerationEntry(chatStore, operationId);
       }
 
