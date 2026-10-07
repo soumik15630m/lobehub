@@ -296,21 +296,40 @@ export default class ShellCommandCtr extends ControllerModule {
     }
 
     if (!params.sandbox) {
-      // A command that reaches the CLI later in its text gets the same
-      // environment. Without it, `lh` fell back to the device's own stored
-      // login — on most devices missing or long expired — and failed with "No
-      // authentication found" or `invalid_grant`, alternating with successes
-      // depending only on how the model happened to start each command.
+      // A command that reaches the CLI later in its text gets credentials too.
+      // Without them, `lh` fell back to the device's own stored login — on most
+      // devices missing or long expired — and failed with "No authentication
+      // found" or `invalid_grant`, alternating with successes depending only
+      // on how the model happened to start each command.
       //
-      // Deliberately gated on the text rather than given to every command: the
-      // environment carries the signed-in session's token, and an unrelated
-      // `npm install` or build must not hand it to third-party code.
+      // Unlike the prefixed route above, the token is not exported to the
+      // shell: it rides a per-command `lh` shim (`CliCtr.buildIndirectCliEnv`)
+      // so `npm install && lh …` does not hand it to the install, and it is
+      // gated on the text so a command that never names the CLI gets nothing.
       const cliCtr = this.app.getController(CliCtr);
-      if (cliCtr && MENTIONS_LH.test(params.command)) {
-        const env = await cliCtr.buildCliEnv(params.env);
-        return runCommand({ ...params, env }, { logger, processManager, spawnProcess });
+      if (!cliCtr || !MENTIONS_LH.test(params.command)) {
+        return runCommand(params, { logger, processManager, spawnProcess });
       }
-      return runCommand(params, { logger, processManager, spawnProcess });
+
+      const { dispose, env } = await cliCtr.buildIndirectCliEnv(params.env);
+      let spawned = false;
+      const spawnThenDispose = ((...args: Parameters<typeof spawnProcess>) => {
+        const child = spawnProcess(...args);
+        spawned = true;
+        child.once('exit', dispose);
+        child.once('error', dispose);
+        return child;
+      }) as typeof spawnProcess;
+
+      try {
+        return await runCommand(
+          { ...params, env },
+          { logger, processManager, spawnProcess: spawnThenDispose },
+        );
+      } finally {
+        // Nothing was spawned (bad cwd, early refusal): no exit is coming.
+        if (!spawned) dispose();
+      }
     }
 
     // Sandboxed run. The policy is scoped to the run's working directory, so
