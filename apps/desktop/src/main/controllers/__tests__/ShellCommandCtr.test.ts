@@ -63,7 +63,13 @@ vi.mock('@lobechat/device-sandbox', () => ({
   probeSandboxCapability: () => mockProbeSandboxCapability(),
 }));
 
+const mockDisposeCliShim = vi.fn();
+
 const mockCliCtr = {
+  buildIndirectCliEnv: vi.fn(async (env: Record<string, string> = {}) => ({
+    dispose: mockDisposeCliShim,
+    env: { ...env, PATH: `/cli/shim${delimiter}/cli/bin${delimiter}${process.env.PATH ?? ''}` },
+  })),
   buildCliEnv: vi.fn(async (env: Record<string, string> = {}) => ({
     ...env,
     LOBEHUB_JWT: 'jwt-token',
@@ -300,21 +306,37 @@ describe('ShellCommandCtr (thin wrapper)', () => {
       ['a loop', 'for id in a b; do lh memory delete context $id --yes; done'],
       ['a command substitution', 'IDS=$(lh file list -L 500 2>&1 | grep -oE "^file_[A-Za-z0-9]+")'],
       ['a PowerShell assignment', '$raw = lh doc view docs_x --json'],
-    ])('injects the CLI env into %s', async (_, command) => {
-      exitWith(0);
+    ])(
+      'authenticates lh reached from %s through the shim, not the shell env',
+      async (_, command) => {
+        exitWith(0);
 
-      await ctr.handleRunCommand({ command, env: { DS_KEY: 'sk-real-secret' } });
+        await ctr.handleRunCommand({ command, env: { DS_KEY: 'sk-real-secret' } });
 
-      expect(mockCliCtr.buildCliEnv).toHaveBeenCalledWith(
-        expect.objectContaining({ DS_KEY: 'sk-real-secret' }),
-      );
-      const options = mockSpawn.mock.calls[0][2];
-      expect(options.env).toMatchObject({
-        DS_KEY: 'sk-real-secret',
-        LOBEHUB_JWT: 'jwt-token',
-        LOBEHUB_SERVER: 'https://app.example.com',
+        expect(mockCliCtr.buildIndirectCliEnv).toHaveBeenCalledWith(
+          expect.objectContaining({ DS_KEY: 'sk-real-secret' }),
+        );
+        expect(mockCliCtr.buildCliEnv).not.toHaveBeenCalled();
+        const options = mockSpawn.mock.calls[0][2];
+        expect(options.env).toMatchObject({ DS_KEY: 'sk-real-secret' });
+        expect(options.env.LOBEHUB_JWT).not.toBe('jwt-token');
+        expect(options.env.PATH.split(delimiter)[0]).toBe('/cli/shim');
+        expect(mockDisposeCliShim).toHaveBeenCalled();
+      },
+    );
+
+    it('keeps the lh shim until a still-running command exits', async () => {
+      const result = await ctr.handleRunCommand({
+        command: 'nohup sh -c "sleep 60; lh whoami" &',
+        timeout: 100,
       });
-      expect(options.env.PATH.split(delimiter)[0]).toBe('/cli/bin');
+
+      expect((result as { running?: boolean }).running).toBe(true);
+      expect(mockDisposeCliShim).not.toHaveBeenCalled();
+
+      emitChildProcess('exit', 0);
+
+      expect(mockDisposeCliShim).toHaveBeenCalledTimes(1);
     });
 
     it.each([
@@ -327,6 +349,7 @@ describe('ShellCommandCtr (thin wrapper)', () => {
       await ctr.handleRunCommand({ command });
 
       expect(mockCliCtr.buildCliEnv).not.toHaveBeenCalled();
+      expect(mockCliCtr.buildIndirectCliEnv).not.toHaveBeenCalled();
       expect(mockSpawn.mock.calls[0][2].env?.LOBEHUB_JWT).not.toBe('jwt-token');
     });
 
@@ -401,6 +424,7 @@ describe('ShellCommandCtr (thin wrapper)', () => {
       // Only a command that starts with `lh` leaves the fence with credentials;
       // anything else sandboxed never sees them.
       expect(mockCliCtr.buildCliEnv).not.toHaveBeenCalled();
+      expect(mockCliCtr.buildIndirectCliEnv).not.toHaveBeenCalled();
     });
 
     it('refuses a sandboxed run with no working directory to confine', async () => {
