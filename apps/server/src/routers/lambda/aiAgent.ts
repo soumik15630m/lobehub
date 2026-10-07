@@ -1579,6 +1579,8 @@ const HeteroFinishSchema = z.object({
     })
     .optional(),
   operationId: z.string().min(1),
+  /** True only after the producer has exited; omitted by legacy intermediate signals. */
+  finalCancellation: z.boolean().optional(),
   result: z.enum(['success', 'error', 'cancelled']),
   sessionId: z.string().optional(),
   topicId: z.string().min(1),
@@ -3385,7 +3387,16 @@ export const aiAgentRouter = router({
    * CLI's own end-event was lost mid-flight.
    */
   heteroFinish: heteroAgentProcedure.input(HeteroFinishSchema).mutation(async ({ input, ctx }) => {
-    const { agentType, assistantMessageId, error, operationId, result, sessionId, topicId } = input;
+    const {
+      agentType,
+      assistantMessageId,
+      error,
+      finalCancellation,
+      operationId,
+      result,
+      sessionId,
+      topicId,
+    } = input;
 
     // A terminal row is the normal state for a finish that lost a race (gateway
     // completion, a settle from another tab). The service already has the stale
@@ -3417,6 +3428,7 @@ export const aiAgentRouter = router({
         agentType,
         assistantMessageId,
         error,
+        finalCancellation,
         operationId,
         result,
         sessionId,
