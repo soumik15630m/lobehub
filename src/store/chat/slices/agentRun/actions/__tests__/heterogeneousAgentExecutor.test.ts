@@ -1256,6 +1256,17 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
           deadline: Date.now() + 300_000,
           identifier: 'codex',
           interventionId: 'approval-callback',
+          provider: 'codex',
+          interactionKind: 'permission',
+          reviewArguments: JSON.stringify({
+            questions: [
+              {
+                header: 'Scope',
+                question: 'Unknown scope',
+                options: [{ id: 'cancel_turn', label: 'Stop' }],
+              },
+            ],
+          }),
           toolCallId: 'toolu_ask',
         },
         type: 'agent_intervention_request',
@@ -1291,6 +1302,7 @@ describe('heterogeneousAgentExecutor DB persistence', () => {
           intervention: {
             status: 'pending',
             interventionId: 'approval-callback',
+            reviewDecisionIds: ['cancel_turn'],
             arguments: expect.stringContaining('Outside workspace'),
           },
         },
