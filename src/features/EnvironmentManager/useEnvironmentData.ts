@@ -8,6 +8,8 @@ import {
   sandboxStorageService,
 } from '@/services/sandboxStorage';
 
+import { settleThenRefresh } from './settleThenRefresh';
+
 const ENVIRONMENTS_KEY = 'sandbox-environments';
 const INSTANCES_KEY = 'sandbox-environment-instances';
 const WORKSPACE_KEY = 'sandbox-workspace-info';
@@ -320,11 +322,10 @@ export const useEnvironmentActions = () => {
      * it" leaves the row unchanged, so the error is the only place it shows.
      */
     rebuildInstance: async (id: string) => {
-      try {
-        await sandboxStorageService.startInstanceBuild({ id });
-      } finally {
-        await refreshInstances();
-      }
+      await settleThenRefresh(
+        () => sandboxStorageService.startInstanceBuild({ id }),
+        refreshInstances,
+      );
     },
 
     createInstance: async (params: {
@@ -380,13 +381,8 @@ export const useEnvironmentActions = () => {
      * the row keeps saying "Stopping" until this returns — waiting on a
      * sandbox to measure sizes kept it there long after the run had ended.
      */
-    stopInstance: async (id: string) => {
-      try {
-        return await sandboxStorageService.stopInstance({ id });
-      } finally {
-        await refreshRows();
-      }
-    },
+    stopInstance: async (id: string) =>
+      settleThenRefresh(() => sandboxStorageService.stopInstance({ id }), refreshRows),
 
     renameInstance: async (params: { id: string; name: string }) => {
       await sandboxStorageService.renameInstance(params);
