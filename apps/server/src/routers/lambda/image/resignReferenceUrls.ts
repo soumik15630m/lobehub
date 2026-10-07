@@ -1,7 +1,9 @@
 import { files } from '@lobechat/database/schemas';
+import type { FileAccessScope } from '@lobechat/types';
 import { and, inArray } from 'drizzle-orm';
 
 import type { LobeChatDatabase } from '@/database/type';
+import { fileMatchesAccessScope } from '@/database/utils/fileVisibility';
 import { buildWorkspaceWhere } from '@/database/utils/workspace';
 import type { FileService } from '@/server/services/file';
 
@@ -21,9 +23,14 @@ import type { FileService } from '@/server/services/file';
  *
  *   1. extract the storage key from the URL pathname (`getKeyFromFullUrl`);
  *   2. confirm the key belongs to an uploaded file the caller can access
- *      (`files.url` match scoped by `buildWorkspaceWhere`) — never re-sign a
- *      key that no file record vouches for, or access control would widen
- *      from "URL holder" to "any key guesser";
+ *      (`files.url` match scoped by `buildWorkspaceWhere` AND the caller's
+ *      `fileAccessScope`) — never re-sign a key that no file record vouches
+ *      for, or access control would widen from "URL holder" to "any key
+ *      guesser". The scope matters when the caller is an agent-share visitor
+ *      run executing under the shared agent's creator: without it, a
+ *      visitor-controlled `/f/{id}` URL could resolve a private file owned by
+ *      the creator and receive a fresh valid signature, bypassing the
+ *      `metadata.agentShare` boundary enforced everywhere else;
  *   3. re-sign the verified key into a fresh presigned URL.
  *
  * Unrecognized URLs (external CDN, proxy `/f/{id}` form is resolved by
@@ -33,6 +40,7 @@ export const resignOwnStorageReferenceUrls = async (
   urls: string[],
   ctx: {
     db: LobeChatDatabase;
+    fileAccessScope?: FileAccessScope;
     fileService: Pick<FileService, 'createPreSignedUrlForPreview' | 'getKeyFromFullUrl'>;
     userId: string;
     workspaceId?: string;
@@ -63,13 +71,17 @@ export const resignOwnStorageReferenceUrls = async (
   if (candidateIndexes.length === 0) return urls;
 
   // Access control: re-sign only keys that map to a file record visible to
-  // the caller. Same-key rows from repeated uploads are equivalent.
+  // the caller under BOTH the workspace/ownership predicate and the run's
+  // file access scope (an agent-share visitor run may only re-sign files it
+  // uploaded through that share). Same-key rows from repeated uploads are
+  // equivalent.
   const rows = await ctx.db
     .select({ url: files.url })
     .from(files)
     .where(
       and(
         buildWorkspaceWhere({ userId: ctx.userId, workspaceId: ctx.workspaceId }, files),
+        fileMatchesAccessScope(files.metadata, ctx.fileAccessScope ?? { type: 'ordinary' }),
         inArray(files.url, candidateKeys),
       ),
     );

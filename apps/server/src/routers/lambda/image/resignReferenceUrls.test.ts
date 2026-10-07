@@ -17,6 +17,14 @@ vi.mock('@/database/utils/workspace', () => ({
   buildWorkspaceWhere: vi.fn((ctx: unknown, cols: unknown) => ({ ctx, cols })),
 }));
 
+// Spy on the access-scope predicate: the unit under test must forward the
+// caller's scope into the ownership query. The predicate's own semantics
+// (ordinary callers never see share files) are covered in the database package.
+const fileVisibilityMocks = vi.hoisted(() => ({
+  fileMatchesAccessScope: vi.fn((metadata: unknown, scope: unknown) => ({ metadata, scope })),
+}));
+vi.mock('@/database/utils/fileVisibility', () => fileVisibilityMocks);
+
 const createFileService = (
   overrides: {
     createPreSignedUrlForPreview?: (key: string) => Promise<string>;
@@ -45,6 +53,7 @@ describe('resignOwnStorageReferenceUrls', () => {
     vi.clearAllMocks();
     mockDbWhere.mockReset();
     mockDbWhere.mockResolvedValue([]);
+    fileVisibilityMocks.fileMatchesAccessScope.mockClear();
   });
 
   it('returns urls unchanged when none resolve to a storage key', async () => {
@@ -140,5 +149,39 @@ describe('resignOwnStorageReferenceUrls', () => {
   it('returns an empty list untouched', async () => {
     const result = await resignOwnStorageReferenceUrls([], ctx());
     expect(result).toEqual([]);
+  });
+
+  it('scopes the ownership query with the caller fileAccessScope when present', async () => {
+    const fileService = createFileService({
+      getKeyFromFullUrl: async () => 'files/496970/8a932b61.png',
+    });
+    mockDbWhere.mockResolvedValue([{ url: 'files/496970/8a932b61.png' }]);
+    const scope = { shareId: 'share-1', type: 'agentShare', visitorUserId: 'visitor-1' } as const;
+
+    const result = await resignOwnStorageReferenceUrls(
+      [PRESIGNED],
+      ctx({ fileAccessScope: scope, fileService }),
+    );
+
+    expect(fileVisibilityMocks.fileMatchesAccessScope).toHaveBeenCalledWith(
+      expect.anything(),
+      scope,
+    );
+    expect(result).toEqual([
+      'https://storage.example.com/files/496970/8a932b61.png?fresh=signature',
+    ]);
+  });
+
+  it('defaults to the ordinary scope so share files are never re-signed for regular callers', async () => {
+    const fileService = createFileService({
+      getKeyFromFullUrl: async () => 'files/496970/8a932b61.png',
+    });
+    mockDbWhere.mockResolvedValue([{ url: 'files/496970/8a932b61.png' }]);
+
+    await resignOwnStorageReferenceUrls([PRESIGNED], ctx({ fileService }));
+
+    expect(fileVisibilityMocks.fileMatchesAccessScope).toHaveBeenCalledWith(expect.anything(), {
+      type: 'ordinary',
+    });
   });
 });
