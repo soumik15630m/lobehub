@@ -81,7 +81,15 @@ export const useInstances = () => {
     await sizes.mutate();
   }, [rows.mutate, sizes.mutate]);
 
-  return { data, error: rows.error, isLoading: rows.isLoading, mutate };
+  return {
+    data,
+    error: rows.error,
+    isLoading: rows.isLoading,
+    mutate,
+    // Occupancy and status live on the rows. A change that touches nothing
+    // else must not wait on the sizes, which can take a sandbox cold start.
+    refreshRows: rows.mutate,
+  };
 };
 
 /**
@@ -254,7 +262,7 @@ export type SandboxEnvironment = NonNullable<
  */
 export const useEnvironmentActions = () => {
   const { mutate: globalMutate } = useSWRConfig();
-  const { mutate: refreshInstances } = useInstances();
+  const { mutate: refreshInstances, refreshRows } = useInstances();
 
   // Every pool and every workspace, not the one this caller happens to be
   // looking at: publishing an environment takes it out of one tab and puts it
@@ -361,6 +369,23 @@ export const useEnvironmentActions = () => {
     removeInstance: async (id: string) => {
       await sandboxStorageService.removeInstance({ id });
       await refreshInstances();
+    },
+
+    /**
+     * End the run holding an instance. Refreshed either way: a refusal such as
+     * "still saving" may land after the run did end on its own, and the row's
+     * Running badge is what the person is looking at.
+     *
+     * The rows only: a stop changes who holds the instance, not its size, and
+     * the row keeps saying "Stopping" until this returns — waiting on a
+     * sandbox to measure sizes kept it there long after the run had ended.
+     */
+    stopInstance: async (id: string) => {
+      try {
+        return await sandboxStorageService.stopInstance({ id });
+      } finally {
+        await refreshRows();
+      }
     },
 
     renameInstance: async (params: { id: string; name: string }) => {
