@@ -400,6 +400,11 @@ export const agentManagementRuntime: ServerRuntimeRegistration = {
             }
           }
 
+          const agent = await agentModel.getAgentConfigById(agentId);
+          if (!agent) {
+            return { content: `Agent "${agentId}" not found.`, success: false };
+          }
+
           const updatedParts: string[] = [];
 
           if (config && Object.keys(config).length > 0) {
@@ -429,6 +434,14 @@ export const agentManagementRuntime: ServerRuntimeRegistration = {
       updatePrompt: async (params: UpdatePromptParams): Promise<ToolExecutionResult> => {
         try {
           const { agentId, prompt } = params;
+          // `agentModel.update` matches zero rows for a missing (deleted) agent
+          // without erroring — check first so the call can't report a write that
+          // never landed.
+          const agent = await agentModel.getAgentConfigById(agentId);
+          if (!agent) {
+            return { content: `Agent "${agentId}" not found.`, success: false };
+          }
+
           await agentModel.update(agentId, { editorData: null, systemRole: prompt } as Record<
             string,
             unknown
