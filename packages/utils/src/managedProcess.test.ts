@@ -206,14 +206,32 @@ describe.skipIf(process.platform === 'win32')('managed process shutdown', () => 
     });
   });
 
-  it('links a browser daemon to its message only when one call could have launched it', async () => {
+  it('keeps only the launch owner every candidate call agrees on, and still reaps it', async () => {
     const registry = new ManagedProcessRegistry();
     // Two calls in one topic share the namespace before the daemon is sampled:
     // the later call must not claim a daemon the earlier one may have started.
     const raced = registry.environment({ messageId: 'msg_a', topicId: 'race-topic' });
     registry.environment({ messageId: 'msg_b', topicId: 'race-topic' });
-    const solo = registry.environment({ messageId: 'msg_solo', topicId: 'solo-topic' });
-    const daemons = [raced, solo].map(() =>
+    // Two members of a group topic: the agent is just as ambiguous as the message.
+    const group = registry.environment({
+      agentId: 'agt_coder',
+      groupId: 'grp_1',
+      messageId: 'msg_coder',
+      topicId: 'group-topic',
+    });
+    registry.environment({
+      agentId: 'agt_reviewer',
+      groupId: 'grp_1',
+      messageId: 'msg_reviewer',
+      topicId: 'group-topic',
+    });
+    const solo = registry.environment({
+      agentId: 'agt_solo',
+      messageId: 'msg_solo',
+      topicId: 'solo-topic',
+    });
+    const envs = [raced, group, solo];
+    const daemons = envs.map(() =>
       spawn(
         process.execPath,
         [
@@ -224,12 +242,13 @@ describe.skipIf(process.platform === 'win32')('managed process shutdown', () => 
       ),
     );
     cleanup.push(async () => {
+      vi.restoreAllMocks();
       for (const daemon of daemons) daemon.kill('SIGKILL');
       await registry.shutdown(0);
       await rm(raced.AGENT_BROWSER_SOCKET_DIR, { recursive: true, force: true });
     });
     await Promise.all(daemons.map((daemon) => once(daemon.stdout!, 'data')));
-    for (const [index, env] of [raced, solo].entries()) {
+    for (const [index, env] of envs.entries()) {
       const directory = path.join(
         env.AGENT_BROWSER_SOCKET_DIR,
         'namespaces',
@@ -240,12 +259,21 @@ describe.skipIf(process.platform === 'win32')('managed process shutdown', () => 
       await writeFile(path.join(directory, 'default.pid'), String(daemons[index].pid));
     }
     const { processes } = await registry.snapshot();
-    const raceRow = processes.find((row) => row.pid === daemons[0].pid);
-    expect(raceRow).toMatchObject({ topicId: 'race-topic' });
-    expect(raceRow?.messageId).toBeUndefined();
-    expect(processes.find((row) => row.pid === daemons[1].pid)).toMatchObject({
+    const row = (index: number) => processes.find((item) => item.pid === daemons[index].pid);
+    expect(row(0)).toMatchObject({ topicId: 'race-topic' });
+    expect(row(0)?.messageId).toBeUndefined();
+    expect(row(1)).toMatchObject({ groupId: 'grp_1', topicId: 'group-topic' });
+    expect(row(1)?.agentId).toBeUndefined();
+    expect(row(1)?.messageId).toBeUndefined();
+    expect(row(2)).toMatchObject({
+      agentId: 'agt_solo',
       messageId: 'msg_solo',
       topicId: 'solo-topic',
     });
+
+    // A daemon left without an agent is still its namespace's, so idle cleanup finds it.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 901000);
+    await registry.snapshot();
+    await vi.waitFor(() => expect(alive(daemons[1].pid!)).toBe(false), { timeout: 3000 });
   });
 });
