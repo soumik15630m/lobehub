@@ -272,9 +272,10 @@ class SkillServerRuntimeService implements SkillRuntimeService {
   private preprocessSandboxCommand = async (
     command: string,
   ): Promise<{ command: string; error?: string }> => {
-    // Resolved for every command: an `lh` called from a script file is
-    // invisible to `isLhCommand`, and must still land in the run's workspace.
-    const workspaceId = this.workspaceId ?? (await this.resolveWorkspaceId());
+    // Every command carries the scope, since an `lh` called from a script file
+    // is invisible to `isLhCommand`. The factory already resolved it into
+    // `this.workspaceId` (`undefined` means personal), so no lookup per command.
+    const workspaceId = this.workspaceId;
     // `lobe-skills` IS reachable in an Agent Share visitor's run now (only its
     // two load APIs are), so this runtime does get constructed for one and the
     // guard is no longer redundant: `this.userId` is the CREATOR, and minting
