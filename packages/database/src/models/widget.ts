@@ -839,6 +839,7 @@ export class WidgetModel {
         .insert(widgetRuns)
         .values({
           createdAt: sql`clock_timestamp()`,
+          startedAt: new Date(),
           operationId: input.operationId ?? null,
           status: 'running',
           trigger: input.trigger,
