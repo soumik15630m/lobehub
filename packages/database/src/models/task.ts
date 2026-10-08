@@ -264,8 +264,7 @@ export const isTaskIdentifierUniqueViolation = (error: unknown): boolean => {
  * leftover, not a schedule, and listing it as one lets dead entries crowd real
  * ones out of a bounded roll-up.
  *
- * Kept as one expression so the `automated` filter's two sides stay exact
- * complements and no row falls into neither bucket.
+ * Used for the runnable roll-up; management includes all configured automation.
  */
 const RUNNABLE_AUTOMATION = and(
   notInArray(tasks.status, ['canceled', 'completed', 'failed']),
@@ -277,6 +276,13 @@ const RUNNABLE_AUTOMATION = and(
     ),
     and(eq(tasks.automationMode, 'heartbeat'), gt(tasks.heartbeatInterval, 0)),
   ),
+)!;
+
+/** Automation configuration survives switching a task off. */
+const CONFIGURED_AUTOMATION = or(
+  isNotNull(tasks.automationMode),
+  and(isNotNull(tasks.schedulePattern), ne(tasks.schedulePattern, '')),
+  gt(tasks.heartbeatInterval, 0),
 )!;
 
 interface TaskListFilterOptions {
@@ -406,19 +412,11 @@ export class TaskModel {
     if (assigneeUserId) conditions.push(eq(tasks.assigneeUserId, assigneeUserId));
     if (createdByUserId) conditions.push(eq(tasks.createdByUserId, createdByUserId));
     if (automated === true) {
-      conditions.push(
-        includeDisabledAutomation
-          ? or(
-              isNotNull(tasks.automationMode),
-              and(isNotNull(tasks.schedulePattern), ne(tasks.schedulePattern, '')),
-              gt(tasks.heartbeatInterval, 0),
-            )!
-          : RUNNABLE_AUTOMATION,
-      );
+      conditions.push(includeDisabledAutomation ? CONFIGURED_AUTOMATION : RUNNABLE_AUTOMATION);
     }
     // `IS NOT TRUE`, not `NOT (…)`: nullable automation fields make the
-    // runnable expression NULL for manual tasks, and WHERE would drop them.
-    if (automated === false) conditions.push(sql`${RUNNABLE_AUTOMATION} IS NOT TRUE`);
+    // configuration expression NULL for manual tasks, and WHERE would drop them.
+    if (automated === false) conditions.push(sql`${CONFIGURED_AUTOMATION} IS NOT TRUE`);
     if (projectId) conditions.push(eq(tasks.projectId, projectId));
     if (visibility) conditions.push(eq(tasks.visibility, visibility));
 

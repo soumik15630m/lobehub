@@ -159,8 +159,8 @@ const listSchema = z
       .optional(),
     assigneeAgentId: z.string().optional(),
     // true → only tasks whose schedule or heartbeat can still fire (a terminal or
-    // misconfigured one cannot), false → its exact complement. Omitted leaves the
-    // set unnarrowed.
+    // misconfigured one cannot). includeDisabledAutomation includes all configured
+    // automation; false selects tasks without configuration. Omitted leaves the set unnarrowed.
     automated: z.boolean().optional(),
     includeDisabledAutomation: z.boolean().optional(),
     limit: z.number().min(1).max(100).default(50),
