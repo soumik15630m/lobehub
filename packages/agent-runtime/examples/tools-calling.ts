@@ -12,7 +12,7 @@ async function* openaiRuntime(payload: any) {
 
   const { messages, tools } = payload;
 
-  const stream = await openai.chat.completions.create({
+  const stream = await openai.chat.completions.create.stream({
     messages,
     model: 'gpt-4.1-mini',
     stream: true,
