@@ -418,11 +418,11 @@ describe('TaskModel', () => {
       const automated = await model.list({ automated: true });
       expect(automated.tasks.map((t) => t.id)).toEqual([live.id]);
 
-      // Complementary, so nothing falls into neither bucket.
-      const manual = await model.list({ automated: false });
-      expect(manual.tasks.map((t) => t.id).sort()).toEqual(
-        [noPattern.id, noInterval.id, done.id].sort(),
+      const management = await model.list({ automated: true, includeDisabledAutomation: true });
+      expect(management.tasks.map((t) => t.id).sort()).toEqual(
+        [live.id, noPattern.id, noInterval.id, done.id].sort(),
       );
+      expect((await model.list({ automated: false })).tasks).toEqual([]);
     });
 
     it('should order by last activity when asked, not by creation', async () => {
@@ -653,7 +653,7 @@ describe('TaskModel', () => {
       });
       await model.update(cron.id, { automationMode: null });
       await model.update(heartbeat.id, { automationMode: null });
-      await model.create({ instruction: 'Manual' });
+      const manual = await model.create({ instruction: 'Manual' });
       const other = new TaskModel(serverDB, userId2);
       await other.create({ instruction: 'Other owner', schedulePattern: '0 9 * * *' });
       const management = await model.list({ automated: true, includeDisabledAutomation: true });
@@ -662,6 +662,16 @@ describe('TaskModel', () => {
         [cron.id, heartbeat.id].sort(),
       );
       expect((await model.list({ automated: true })).total).toBe(0);
+      const ordinary = await model.list({ automated: false });
+      expect(ordinary.tasks.map((task) => task.id)).toEqual([manual.id]);
+      expect(ordinary.total).toBe(1);
+      const [board] = await model.groupList({
+        automated: false,
+        groups: [{ key: 'backlog', statuses: ['backlog'] }],
+      });
+      expect(board.tasks.map((task) => task.id)).toEqual([manual.id]);
+      expect(board.total).toBe(1);
+      expect(new Set([...management.tasks, ...ordinary.tasks].map((task) => task.id)).size).toBe(3);
     });
 
     it('should split automated tasks from manual ones', async () => {
